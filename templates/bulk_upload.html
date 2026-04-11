@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}Bulk Upload Trades{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 offset-md-2">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="mb-0">Bulk Upload Trades via CSV</h3>
+            </div>
+            <div class="card-body">
+                <p>Upload a CSV file with your trade history. The file must contain the following columns in this order:</p>
+                <code>symbol,name,trade_type,quantity,price,currency,trade_date,broker,fx_rate,fee_amount,fee_currency</code>
+                <hr>
+                <h6>Column Details:</h6>
+                <ul>
+                    <li><strong>trade_date</strong>: Must be in <code>YYYY-MM-DD</code> format.</li>
+                    <li><strong>trade_type</strong>: Must be <code>BUY</code> or <code>SELL</code>.</li>
+                    <li><strong>currency</strong>: Must be <code>USD</code> or <code>JPY</code>.</li>
+                    <li><strong>fx_rate, fee_amount, fee_currency</strong>: Can be left empty if not applicable.</li>
+                </ul>
+                <hr>
+                <p>
+                    <a href="data:text/csv;charset=utf-8,symbol,name,trade_type,quantity,price,currency,trade_date,broker,fx_rate,fee_amount,fee_currency%0AVOO,Vanguard S&P 500 ETF,BUY,10,450.50,USD,2023-10-25,Interactive Brokers,150.12,1.00,USD" download="template.csv" class="btn btn-secondary btn-sm">
+                        Download Template
+                    </a>
+                </p>
+                <form method="post" enctype="multipart/form-data" class="mt-3">
+                    <div class="mb-3">
+                        <label for="file" class="form-label">Select CSV File</label>
+                        <input class="form-control" type="file" id="file" name="file" accept=".csv" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Upload and Process</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

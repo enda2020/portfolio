@@ -1,0 +1,14 @@
+# This file tells AI tools which files and directories to ignore.
+
+# Database file - contains user data and is not source code.
+holdings.db
+
+# Python virtual environment directory.
+venv/
+
+# Python cache files.
+__pycache__/
+
+# Editor/IDE specific configuration.
+.vscode/
+.idea/

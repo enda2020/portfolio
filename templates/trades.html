@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}Trade History{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Trade History</h1>
+    <div>
+        <a href="{{ url_for('export_trades') }}" class="btn btn-secondary">Export All (CSV)</a>
+        <a href="{{ url_for('add_trade') }}" class="btn btn-primary ms-2">Add New Trade</a>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        {% if trades %}
+            <table class="table table-hover table-dark">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Symbol</th>
+                        <th>Type</th>
+                        <th>Broker</th>
+                        <th>Quantity</th>
+                        <th>Price</th>
+                        <th>FX Rate</th>
+                        <th>Fee</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trade in trades %}
+                    <tr class="{{ 'table-success' if trade.trade_type == 'BUY' else 'table-danger' }}">
+                        <td>{{ trade.trade_date }}</td>
+                        <td><strong>{{ trade.symbol }}</strong></td>
+                        <td>{{ trade.trade_type }}</td>
+                        <td>{{ trade.broker }}</td>
+                        <td>{{ trade.quantity }}</td>
+                        <td>{{ '¥' if trade.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(trade.price) }}</td>
+                        <td>{{ "%.4f"|format(trade.fx_rate) if trade.fx_rate is not none else 'N/A' }}</td>
+                        <td>
+                            {% if trade.fee_amount is not none and trade.fee_amount > 0 %}
+                                {{ '¥' if trade.fee_currency == 'JPY' else '$' }}{{ "{:,.2f}".format(trade.fee_amount) }}
+                            {% else %}
+                                N/A
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{{ url_for('edit_trade', trade_id=trade.id) }}" class="btn btn-sm btn-outline-primary">Edit</a>
+                            <a href="{{ url_for('delete_trade', trade_id=trade.id) }}" 
+                               class="btn btn-sm btn-outline-danger" 
+                               onclick="return confirm('Are you sure you want to delete this trade?')">Delete
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <div class="text-center p-5">
+                <h4>No trades recorded.</h4>
+                <p>Add your first trade to build your portfolio history.</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

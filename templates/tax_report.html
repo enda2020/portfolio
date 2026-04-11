@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+
+{% block title %}Tax Report{% endblock %}
+
+{% block container_class %}container-fluid{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">Japanese Tax Report Generator</h1>
+        <div class="card mb-4">
+            <div class="card-body">
+                <form method="POST" class="row align-items-end">
+                    <div class="col-md-4">
+                        <label for="year" class="form-label">Select Financial Year</label>
+                        <select name="year" id="year" class="form-select">
+                            {% for year in years %}
+                            <option value="{{ year }}" {% if report_data and report_data.year == year|int %}selected{% endif %}>{{ year }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="submit" class="btn btn-primary">Generate Report</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if report_data %}
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">Total Proceeds (JPY)</div>
+            <div class="card-body">
+                <h3 class="card-title">¥{{ "{:,.0f}".format(report_data.total_proceeds_jpy) }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">Total Cost Basis (JPY)</div>
+            <div class="card-body">
+                <h3 class="card-title">¥{{ "{:,.0f}".format(report_data.total_cost_basis_jpy) }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card {{ 'text-white bg-success' if report_data.total_pnl_jpy >= 0 else 'text-white bg-danger' }}">
+            <div class="card-header">Total Profit/Loss (JPY)</div>
+            <div class="card-body">
+                <h3 class="card-title">{{- '+' if report_data.total_pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(report_data.total_pnl_jpy) }}</h3>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h4>Sales in {{ report_data.year }}</h4>
+    </div>
+    <div class="card-body">
+        <table class="table table-hover table-dark">
+            <thead>
+                <tr>
+                    <th>Sale Date</th>
+                    <th>Symbol</th>
+                    <th>Company Name</th>
+                    <th>Brokerage</th>
+                    <th>Quantity Sold</th>
+                    <th>Latest Purchase Date</th>
+                    <th>Sale Proceeds (JPY)</th>
+                    <th>Acquisition Cost (JPY)</th>
+                    <th>Selling Fee (JPY)</th>
+                    <th>Profit/Loss (JPY)</th>
+                    <th>Details</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for sale in report_data.sales %}
+                <tr>
+                    <td>{{ sale.trade_date }}</td>
+                    <td><strong>{{ sale.symbol }}</strong></td>
+                    <td>{{ sale.name }}</td>
+                    <td>{{ sale.broker }}</td>
+                    <td>{{ "%.2f"|format(sale.quantity) }}</td>
+                    <td>{{ sale.last_purchase_date or 'N/A' }}</td>
+                    <td>¥{{ "{:,.0f}".format(sale.proceeds_jpy) }}</td>
+                    <td>¥{{ "{:,.0f}".format(sale.cost_basis_jpy) }}</td>
+                    <td>¥{{ "{:,.0f}".format(sale.selling_fee_jpy) }}</td>
+                    <td class="{{ 'text-success' if sale.pnl_jpy >= 0 else 'text-danger' }}">{{- '+' if sale.pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(sale.pnl_jpy) }}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-info" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-{{ loop.index }}" aria-expanded="false" aria-controls="collapse-{{ loop.index }}">
+                            Show
+                        </button>
+                    </td>
+                </tr>
+                <tr class="collapse-row">
+                    <td colspan="11" class="p-0" style="border: none;">
+                        <div class="collapse" id="collapse-{{ loop.index }}">
+                            <div class="card card-body m-2 border-secondary">
+                                <h5 class="card-title">Calculation for {{ sale.symbol }} sale on {{ sale.trade_date }}</h5>
+                                <div class="row">
+                                    <div class="col-lg-6">
+                                        <h6><span class="badge bg-primary">1</span> Sale Proceeds (売却価額)</h6>
+                                        <ul class="list-group list-group-flush">
+                                            <li class="list-group-item">Sale Price: {{ "{:,.2f}".format(sale.sale_price_native) }} {{ sale.sale_currency }}</li>
+                                            {% if sale.sale_currency == 'USD' and sale.sale_fx_rate %}
+                                            <li class="list-group-item">FX Rate (TTB): {{ "%.4f"|format(sale.sale_fx_rate) }}</li>
+                                            <li class="list-group-item">Gross Proceeds: ({{ sale.quantity }} &times; {{ "{:,.2f}".format(sale.sale_price_native) }} &times; {{ "%.4f"|format(sale.sale_fx_rate) }}) = ¥{{ "{:,.0f}".format(sale.quantity * sale.sale_price_native * sale.sale_fx_rate) }}</li>
+                                            {% else %}
+                                            <li class="list-group-item">Gross Proceeds: ({{ sale.quantity }} &times; {{ "{:,.2f}".format(sale.sale_price_native) }}) = ¥{{ "{:,.0f}".format(sale.quantity * sale.sale_price_native) }}</li>
+                                            {% endif %}
+                                            <li class="list-group-item">Selling Fee: ¥{{ "{:,.0f}".format(sale.selling_fee_jpy) }}</li>
+                                            <li class="list-group-item list-group-item-info"><strong>Net Proceeds = ¥{{ "{:,.0f}".format(sale.proceeds_jpy) }}</strong></li>
+                                        </ul>
+                                    </div>
+                                    <div class="col-lg-6 mt-3 mt-lg-0">
+                                        <h6><span class="badge bg-primary">2</span> Acquisition Cost (取得費)</h6>
+                                        <p class="px-3 text-muted small">Calculated using the moving-average method based on all purchases up to the sale date:</p>
+                                        <div class="table-responsive px-2" style="max-height: 200px; overflow-y: auto;">
+                                            <table class="table table-sm table-bordered table-dark">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Date</th>
+                                                        <th>Qty</th>
+                                                        <th>Price</th>
+                                                        <th>FX Rate</th>
+                                                        <th>Fee (JPY)</th>
+                                                        <th>Cost (JPY)</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {% for buy in sale.acquisition_history %}
+                                                    <tr>
+                                                        <td>{{ buy.date }}</td>
+                                                        <td>{{ "%.2f"|format(buy.quantity) }}</td>
+                                                        <td>{{ '¥' if buy.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(buy.price_native) }}</td>
+                                                        <td>{{ "%.4f"|format(buy.fx_rate) if buy.fx_rate else 'N/A' }}</td>
+                                                        <td>¥{{ "{:,.0f}".format(buy.fee_jpy) }}</td>
+                                                        <td>¥{{ "{:,.0f}".format(buy.total_cost_jpy) }}</td>
+                                                    </tr>
+                                                    {% endfor %}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                        <ul class="list-group list-group-flush mt-2">
+                                            <li class="list-group-item">Avg. Cost per Share (at time of sale):<br>
+                                                <strong>¥{{ "{:,.2f}".format(sale.avg_cost_per_share_jpy) }}</strong>
+                                                {% if sale.sale_currency != 'JPY' %}/ <strong>${{ "{:,.2f}".format(sale.avg_cost_per_share_native) }}</strong>{% endif %}
+                                            </li>
+                                            <li class="list-group-item">Quantity Sold: {{ "%.2f"|format(sale.quantity) }}</li>
+                                            <li class="list-group-item list-group-item-info"><strong>Acquisition Cost for this Sale = ¥{{ "{:,.0f}".format(sale.cost_basis_jpy) }}</strong></li>
+                                        </ul>
+                                    </div>
+                                </div>
+                                <hr>
+                                <h6><span class="badge bg-primary">3</span> Profit / Loss (譲渡所得の金額)</h6>
+                                <p class="lead mb-0">
+                                    ¥{{ "{:,.0f}".format(sale.proceeds_jpy) }} (Proceeds) - ¥{{ "{:,.0f}".format(sale.cost_basis_jpy) }} (Cost) = <strong class="{{ 'text-success' if sale.pnl_jpy >= 0 else 'text-danger' }}">¥{{ "{:,.0f}".format(sale.pnl_jpy) }}</strong>
+                                </p>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

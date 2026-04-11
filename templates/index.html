@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+
+{% block title %}Portfolio Dashboard{% endblock %}
+
+{% block navbar_info %}
+<span class="navbar-text d-flex align-items-center">
+    <span>
+        Current FX Rate: 1 USD = ¥{{ "%.2f"|format(exchange_rate) }}
+        <small class="text-white-50 ms-2">(Live as of: {{ prices_last_updated }})</small>
+    </span>
+    <a href="{{ url_for('index') }}" class="btn btn-sm btn-outline-light ms-3" title="Refresh Prices">
+        <i class="fas fa-sync-alt"></i>
+    </a>
+</span>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">Portfolio Summary</h1>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-lg-4 col-md-6 mb-4">
+        <div class="card text-white bg-info">
+            <div class="card-header">Total Portfolio Value (JPY)</div>
+            <div class="card-body">
+                <h3 class="card-title">¥{{ "{:,.0f}".format(total_value_jpy) }}</h3>
+                <p class="card-text text-white-50">≈ ${{ "{:,.2f}".format(total_value_usd) }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4 col-md-6 mb-4">
+        <div class="card {{ 'text-white bg-success' if total_unrealized_pnl_jpy >= 0 else 'text-white bg-danger' }}">
+            <div class="card-header">Unrealized P&L (JPY)</div>
+            <div class="card-body">
+                <h3 class="card-title">{{- '+' if total_unrealized_pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(total_unrealized_pnl_jpy) }}</h3>
+                <p class="card-text text-white-50">≈ {{ '+' if total_unrealized_pnl_usd >= 0 else '' }}${{ "{:,.2f}".format(total_unrealized_pnl_usd) }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4 col-md-6 mb-4">
+        <div class="card {{ 'text-white bg-success' if total_realized_pnl_jpy >= 0 else 'text-white bg-danger' }}">
+            <div class="card-header">Total Realized P&L (JPY)</div>
+            <div class="card-body">
+                <h3 class="card-title">{{- '+' if total_realized_pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(total_realized_pnl_jpy) }}</h3>
+                <p class="card-text text-white-50">≈ {{ '+' if total_realized_pnl_usd >= 0 else '' }}${{ "{:,.2f}".format(total_realized_pnl_usd) }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-lg-7 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h4>Portfolio Value Over Time (JPY)</h4>
+            </div>
+            <div class="card-body">
+                <canvas id="valueHistoryChart" style="max-height: 300px;"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h4>Portfolio Composition (by JPY Value)</h4>
+            </div>
+            <div class="card-body pb-0">
+                <div class="row">
+                    <div class="col-md-6">
+                        <label for="brokerFilter" class="form-label form-label-sm">Broker</label>
+                        <select id="brokerFilter" class="form-select form-select-sm">
+                            <option value="all" selected>All Brokers</option>
+                            {% for broker in brokers %}
+                            <option value="{{ broker }}">{{ broker }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="currencyFilter" class="form-label form-label-sm">Currency</label>
+                        <select id="currencyFilter" class="form-select form-select-sm">
+                            <option value="all" selected>All Currencies</option>
+                            <option value="USD">USD</option>
+                            <option value="JPY">JPY</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <canvas id="portfolioPieChart" style="max-height: 300px; max-width: 100%;"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        {% if stocks %}
+            <table class="table table-hover table-dark" style="margin-bottom: 0;">
+                <thead>
+                    <tr>
+                        <th scope="col">Symbol</th>
+                        <th scope="col">Broker</th>
+                        <th scope="col">Name</th>
+                        <th scope="col">Quantity</th>
+                        <th scope="col">Avg. Cost</th>
+                        <th scope="col">Current Price</th>
+                        <th scope="col">Current Value (JPY)</th>
+                        <th scope="col">P&L (JPY)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for stock in stocks %}
+                    <tr>
+                        <td><strong>{{ stock.symbol }}</strong></td>
+                        <td>{{ stock.broker }}</td>
+                        <td>{{ stock.name }}</td>
+                        <td>{{ "%.2f"|format(stock.quantity) }}</td>
+                        <td>{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.avg_cost_basis) }}</td>
+                        <td>{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.current_price) }}</td>
+                        <td>¥{{ "{:,.0f}".format(stock.current_value_jpy) }}</td>
+                        <td class="{{ 'text-success' if stock.pnl_jpy >= 0 else 'text-danger' }}">
+                            {{- '+' if stock.pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(stock.pnl_jpy) }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <div class="text-center p-5">
+                <h4>No holdings calculated.</h4>
+                <p>Add your first trade to get started!</p>
+                <a href="{{ url_for('add_trade') }}" class="btn btn-primary">Add Trade</a>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const stocks = {{ stocks|tojson }};
+    const historyData = {{ history_data|tojson }};
+    let pieChart = null; // To hold the chart instance
+
+    const brokerFilter = document.getElementById('brokerFilter');
+    const currencyFilter = document.getElementById('currencyFilter');
+
+    function renderPieChart(filteredStocks) {
+        const labels = filteredStocks.map(s => `${s.symbol} (${s.broker})`);
+        const data = filteredStocks.map(s => s.current_value_jpy);
+
+        const pieChartData = {
+            labels: labels,
+            datasets: [{
+                label: 'Value (JPY)',
+                data: data,
+                backgroundColor: [
+                    '#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b',
+                    '#858796', '#5a5c69', '#f8f9fc', '#e83e8c', '#6f42c1'
+                ],
+                hoverOffset: 4
+            }]
+        };
+
+        const pieConfig = {
+            type: 'pie',
+            data: pieChartData,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'right',
+                    }
+                }
+            }
+        };
+
+        const ctx = document.getElementById('portfolioPieChart').getContext('2d');
+        if (pieChart) {
+            pieChart.destroy(); // Destroy old chart before creating new one
+        }
+        pieChart = new Chart(ctx, pieConfig);
+    }
+
+    function applyFilters() {
+        const selectedBroker = brokerFilter.value;
+        const selectedCurrency = currencyFilter.value;
+
+        const filteredStocks = stocks.filter(stock => {
+            const brokerMatch = selectedBroker === 'all' || stock.broker === selectedBroker;
+            const currencyMatch = selectedCurrency === 'all' || stock.currency === selectedCurrency;
+            return brokerMatch && currencyMatch;
+        });
+
+        if (filteredStocks.length > 0) {
+            renderPieChart(filteredStocks);
+        } else {
+            if (pieChart) pieChart.destroy();
+            pieChart = null;
+            // You could display a message here in the canvas
+        }
+    }
+
+    brokerFilter.addEventListener('change', applyFilters);
+    currencyFilter.addEventListener('change', applyFilters);
+    
+    // Initial render of the charts
+    applyFilters();
+
+    if (historyData && historyData.length > 0) {
+        const labels = historyData.map(h => h.date);
+        const data = historyData.map(h => h.value_jpy);
+
+        const lineChartData = {
+            labels: labels,
+            datasets: [{
+                label: 'Portfolio Value (JPY)',
+                data: data,
+                borderColor: '#4e73df',
+                backgroundColor: 'rgba(78, 115, 223, 0.1)',
+                fill: true,
+                tension: 0.1
+            }]
+        };
+
+        const lineConfig = {
+            type: 'line',
+            data: lineChartData,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        ticks: {
+                            callback: function(value, index, values) {
+                                return '¥' + new Intl.NumberFormat('ja-JP').format(value);
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        new Chart(document.getElementById('valueHistoryChart'), lineConfig);
+    }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}Add Trade{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-6 offset-md-3">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="mb-0">Add New Trade</h3>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('add_trade') }}">
+                    <div class="mb-3">
+                        <label for="trade_date" class="form-label">Date</label>
+                        <input type="date" class="form-control" id="trade_date" name="trade_date" value="{{ today }}" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="symbol" class="form-label">Symbol</label>
+                        <input type="text" class="form-control" id="symbol" name="symbol" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Company Name</label>
+                        <input type="text" class="form-control" id="name" name="name" required>
+                    </div>
+                     <div class="mb-3">
+                        <label class="form-label">Trade Type</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="trade_type" id="buy" value="BUY" checked>
+                            <label class="form-check-label" for="buy">Buy</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="trade_type" id="sell" value="SELL">
+                            <label class="form-check-label" for="sell">Sell</label>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="quantity" class="form-label">Quantity</label>
+                        <input type="number" step="any" class="form-control" id="quantity" name="quantity" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="price" class="form-label">Price (per share)</label>
+                        <input type="number" step="any" class="form-control" id="price" name="price" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="currency" class="form-label">Currency</label>
+                        <select class="form-select" id="currency" name="currency" required>
+                            <option value="USD">USD</option>
+                            <option value="JPY">JPY</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="broker" class="form-label">Broker</label>
+                        <select class="form-select" id="broker" name="broker" required>
+                            {% for broker in brokers %}
+                            <option value="{{ broker }}">{{ broker }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="fx_rate" class="form-label">FX Rate (TTS/TTB)</label>
+                        <input type="number" step="any" class="form-control" id="fx_rate" name="fx_rate">
+                        <div class="form-text">For US stocks, enter the TTS rate for BUYS or TTB rate for SELLS on the trade date. Leave blank for JPY stocks.</div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="fee_amount" class="form-label">Broker Fee</label>
+                            <input type="number" step="any" class="form-control" id="fee_amount" name="fee_amount">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="fee_currency" class="form-label">Fee Currency</label>
+                            <select class="form-select" id="fee_currency" name="fee_currency">
+                                <option value="">-- None --</option>
+                                <option value="USD">USD</option>
+                                <option value="JPY">JPY</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Save Trade</button>
+                    <a href="{{ url_for('list_trades') }}" class="btn btn-secondary">Cancel</a>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
