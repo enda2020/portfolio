@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  app:
+    # Build the Docker image from the Dockerfile in the current directory
+    build: .
+    # Name the container for easier management
+    container_name: portfolio-container
+    ports:
+      - "5001:5001"
+    volumes:
+      # Mount the named volume 'portfolio_db' to the '/app/data' directory in the container
+      - portfolio_db:/app/data
+    restart: unless-stopped
+
+volumes:
+  portfolio_db:
