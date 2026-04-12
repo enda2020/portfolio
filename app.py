@@ -4,11 +4,13 @@ import yfinance as yf
 from datetime import datetime, timedelta
 import csv
 import io
+import os
 
 app = Flask(__name__)
 app.secret_key = 'a_super_secret_key_for_flash_messages' # In production, use a more secure, environment-based key.
 
-DATABASE = 'holdings.db'
+DATA_DIR = 'data'
+DATABASE = os.path.join(DATA_DIR, 'holdings.db')
 BROKERS = ['Monex', 'Interactive Brokers']
 
 def get_exchange_rate():
@@ -40,10 +42,9 @@ def get_stock_price(symbol, currency):
 
 # Database setup
 def init_db():
-    """Initializes the database and creates the table if it doesn't exist."""
+    """Initializes the database, creating the data directory and tables if they don't exist."""
+    os.makedirs(DATA_DIR, exist_ok=True) # Ensure the data directory exists
     with sqlite3.connect(DATABASE) as conn:
-        # We are replacing the 'holdings' table with a 'trades' table.
-        conn.execute('DROP TABLE IF EXISTS holdings')
         conn.execute('''
             CREATE TABLE IF NOT EXISTS trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,7 +68,7 @@ def init_db():
                 value_jpy REAL NOT NULL
             )
         ''')
-    print("Database initialized with trades table.")
+    print("Database tables ensured to exist.")
 
 def _calculate_portfolio_summary(trades, exchange_rate):
     """
@@ -574,7 +575,14 @@ def bulk_upload():
 
     return render_template('bulk_upload.html')
 
+# Initialize database on startup.
+# This ensures the necessary tables exist before the app starts.
+init_db()
+
 if __name__ == '__main__':
-    # Initialize database
-    init_db()
-    app.run(debug=True, port=5001)
+    # This block is for local development only. It runs the Flask development server.
+    # In production (e.g., via Docker), a WSGI server like Gunicorn is used to run the app,
+    # and this block is not executed.
+    # The debug flag is set to True for development, which provides an interactive debugger.
+    # The host '0.0.0.0' makes the server accessible from outside a container.
+    app.run(host='0.0.0.0', port=5001, debug=True)
