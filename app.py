@@ -5,14 +5,31 @@ from datetime import datetime, timedelta
 import csv
 import io
 import os
+from flask_caching import Cache
 
 app = Flask(__name__)
 app.secret_key = 'a_super_secret_key_for_flash_messages' # In production, use a more secure, environment-based key.
 
-DATA_DIR = 'data'
+# Get the absolute path of the directory where this script is located
+basedir = os.path.abspath(os.path.dirname(__file__))
+
+# --- Caching Configuration ---
+# Use FileSystemCache to ensure the cache is shared between Gunicorn workers.
+# The cache will be stored in a 'cache' directory in the project root.
+CACHE_CONFIG = {
+    "CACHE_TYPE": "FileSystemCache",
+    "CACHE_DIR": os.path.join(basedir, "cache"),
+    "CACHE_DEFAULT_TIMEOUT": 300  # Default timeout 5 minutes (300 seconds)
+}
+app.config.from_mapping(CACHE_CONFIG)
+cache = Cache(app)
+
+# Define paths relative to the application's location to ensure they are always correct
+DATA_DIR = os.path.join(basedir, 'data')
 DATABASE = os.path.join(DATA_DIR, 'holdings.db')
 BROKERS = ['Monex', 'Interactive Brokers']
 
+@cache.memoize()
 def get_exchange_rate():
     """Fetches the current USD/JPY exchange rate."""
     try:
@@ -24,6 +41,7 @@ def get_exchange_rate():
         print(f"Could not fetch exchange rate: {e}. Defaulting to 150.")
     return 150.0 # Return a default value if API fails
 
+@cache.memoize()
 def get_stock_price(symbol, currency):
     """Fetches the current price of a stock symbol."""
     # Yahoo Finance uses a ".T" suffix for stocks on the Tokyo Stock Exchange

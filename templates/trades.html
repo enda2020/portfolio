@@ -35,12 +35,12 @@
                         <td><strong>{{ trade.symbol }}</strong></td>
                         <td>{{ trade.trade_type }}</td>
                         <td>{{ trade.broker }}</td>
-                        <td>{{ trade.quantity }}</td>
-                        <td>{{ '¥' if trade.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(trade.price) }}</td>
-                        <td>{{ "%.4f"|format(trade.fx_rate) if trade.fx_rate is not none else 'N/A' }}</td>
+                        <td><span class="sensitive-data">{{ trade.quantity }}</span></td>
+                        <td><span class="sensitive-data">{{ '¥' if trade.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(trade.price) }}</span></td>
+                        <td><span class="sensitive-data">{{ "%.4f"|format(trade.fx_rate) if trade.fx_rate is not none else 'N/A' }}</span></td>
                         <td>
                             {% if trade.fee_amount is not none and trade.fee_amount > 0 %}
-                                {{ '¥' if trade.fee_currency == 'JPY' else '$' }}{{ "{:,.2f}".format(trade.fee_amount) }}
+                                <span class="sensitive-data">{{ '¥' if trade.fee_currency == 'JPY' else '$' }}{{ "{:,.2f}".format(trade.fee_amount) }}</span>
                             {% else %}
                                 N/A
                             {% endif %}

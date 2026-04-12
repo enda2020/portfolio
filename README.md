@@ -18,15 +18,18 @@ A web application for tracking a stock portfolio by logging individual trades. I
     - Bulk upload trades from a CSV file with robust validation.
     - Export all trades to a CSV file for mass editing or backup.
 - **Live Market Data**: Fetches current stock prices and USD/JPY exchange rates from Yahoo Finance.
-- **Production Ready**: Dockerized with a multi-stage build, runs on a Gunicorn WSGI server, and includes a CI/CD pipeline for automated builds.
+- **Performance & Production Ready**:
+    - Market data is cached for 5 minutes to ensure fast page loads.
+    - Dockerized with a multi-stage build, runs on a Gunicorn WSGI server, and includes a CI/CD pipeline for automated builds.
+- **Privacy Mode**: All monetary values can be masked/unmasked using the eye icon in the navigation bar. This setting is saved in your browser.
 
 ## Getting Started
 
-The recommended way to run this application is with Docker.
+The recommended way to run this application is with Docker. This method ensures your database (`holdings.db`) is stored in a local `data/` folder for easy access and backup.
 
 ### Option 1: Docker Compose (Easiest)
 
-With `docker-compose.yml` in your project root, you can build and run the application with a single command:
+With `docker-compose.yml` in your project root, you can build and run the application with a single command. This will automatically use the local `data/` directory for database storage.
 
 ```bash
 docker-compose up --build -d

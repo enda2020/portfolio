@@ -7,6 +7,8 @@ env/
 ## Cache files
 __pycache__/
 *.pyc
+cache/
+
 
 # IDE / Editor specific folders
 .vscode/
