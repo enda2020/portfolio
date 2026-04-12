@@ -98,36 +98,38 @@
 <div class="card">
     <div class="card-body">
         {% if stocks %}
-            <table class="table table-hover table-dark" style="margin-bottom: 0;">
-                <thead>
-                    <tr>
-                        <th scope="col">Symbol</th>
-                        <th scope="col">Broker</th>
-                        <th scope="col">Name</th>
-                        <th scope="col">Quantity</th>
-                        <th scope="col">Avg. Cost</th>
-                        <th scope="col">Current Price</th>
-                        <th scope="col">Current Value (JPY)</th>
-                        <th scope="col">P&L (JPY)</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for stock in stocks %}
-                    <tr>
-                        <td><strong>{{ stock.symbol }}</strong></td>
-                        <td>{{ stock.broker }}</td>
-                        <td>{{ stock.name }}</td>
-                        <td><span class="sensitive-data">{{ "%.2f"|format(stock.quantity) }}</span></td>
-                        <td><span class="sensitive-data">{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.avg_cost_basis) }}</span></td>
-                        <td><span class="sensitive-data">{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.current_price) }}</span></td>
-                        <td><span class="sensitive-data">¥{{ "{:,.0f}".format(stock.current_value_jpy) }}</span></td>
-                        <td class="{{ 'text-success' if stock.pnl_jpy >= 0 else 'text-danger' }}">
-                            <span class="sensitive-data">{{- '+' if stock.pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(stock.pnl_jpy) }}</span>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+            <div class="table-responsive">
+                <table class="table table-hover table-dark" style="margin-bottom: 0;">
+                    <thead>
+                        <tr>
+                            <th scope="col">Symbol</th>
+                            <th scope="col">Broker</th>
+                            <th scope="col">Name</th>
+                            <th scope="col">Quantity</th>
+                            <th scope="col">Avg. Cost</th>
+                            <th scope="col">Current Price</th>
+                            <th scope="col">Current Value (JPY)</th>
+                            <th scope="col">P&L (JPY)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for stock in stocks %}
+                        <tr>
+                            <td><strong>{{ stock.symbol }}</strong></td>
+                            <td>{{ stock.broker }}</td>
+                            <td>{{ stock.name }}</td>
+                            <td><span class="sensitive-data">{{ "%.2f"|format(stock.quantity) }}</span></td>
+                            <td><span class="sensitive-data">{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.avg_cost_basis) }}</span></td>
+                            <td><span class="sensitive-data">{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.current_price) }}</span></td>
+                            <td><span class="sensitive-data">¥{{ "{:,.0f}".format(stock.current_value_jpy) }}</span></td>
+                            <td class="{{ 'text-success' if stock.pnl_jpy >= 0 else 'text-danger' }}">
+                                <span class="sensitive-data">{{- '+' if stock.pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(stock.pnl_jpy) }}</span>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         {% else %}
             <div class="text-center p-5">
                 <h4>No holdings calculated.</h4>

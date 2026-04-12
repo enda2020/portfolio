@@ -98,17 +98,4 @@ The workflow file is located at `.github/workflows/docker-publish.yml`.
 └── README.md              # This file
 ```
 
-## Development
 
-The application includes:
-- Background thread for automatic price updates
-- Currency conversion functions
-- Responsive Bootstrap UI
-- JSON API for data exchange
-- Form validation and error handling
-
-## Notes
-
-- For demonstration purposes, stock prices are mocked. In a production environment, you would integrate with a real stock API.
-- The application automatically updates stock prices every 5 minutes.
-- All data is stored locally in SQLite database.
