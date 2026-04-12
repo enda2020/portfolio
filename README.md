@@ -45,7 +45,12 @@ The application will be available at `http://localhost:5001`.
     ```
 2.  **Run the container:**
     ```bash
-    docker run --name portfolio-container -d -p 5001:5001 -v portfolio_db:/app/data portfolio-app
+    # This command mounts your local `data` directory into the container.
+    # For Linux/macOS/PowerShell
+    docker run --name portfolio-container -d -p 5001:5001 -v "$(pwd)/data":/app/data portfolio-app
+
+    # For Windows Command Prompt (CMD)
+    docker run --name portfolio-container -d -p 5001:5001 -v "%cd%/data":/app/data portfolio-app
     ```
 
 ### Local Development (Without Docker)
