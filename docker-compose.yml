@@ -2,8 +2,8 @@ version: '3.8'
 
 services:
   app:
-    # Build the Docker image from the Dockerfile in the current directory
-    build: .
+    # Use the pre-built image from Docker Hub
+    image: enda2020/portfolio-app:latest
     # Name the container for easier management
     container_name: portfolio-container
     ports:

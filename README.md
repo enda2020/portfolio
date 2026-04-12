@@ -29,11 +29,16 @@ The recommended way to run this application is with Docker. This method ensures 
 
 ### Option 1: Docker Compose (Easiest)
 
-With `docker-compose.yml` in your project root, you can build and run the application with a single command. This will automatically use the local `data/` directory for database storage.
+This is the recommended way to run the application. It uses the pre-built image from Docker Hub and automatically uses the local `data/` directory for database storage.
 
-```bash
-docker-compose up --build -d
-```
+1.  **Pull the latest image from Docker Hub:**
+    ```bash
+    docker-compose pull
+    ```
+2.  **Start the application:**
+    ```bash
+    docker-compose up -d
+    ```
 
 The application will be available at `http://localhost:5001`.
 
