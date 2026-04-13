@@ -6,9 +6,15 @@ import csv
 import io
 import os
 from flask_caching import Cache
+from dotenv import load_dotenv
+
+# Load environment variables from .env file, making them available to os.environ
+load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = 'a_super_secret_key_for_flash_messages' # In production, use a more secure, environment-based key.
+# Load the secret key from an environment variable for production.
+# The default value is only for local development and should not be used in production.
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'a_super_secret_key_for_flash_messages')
 
 # Get the absolute path of the directory where this script is located
 basedir = os.path.abspath(os.path.dirname(__file__))
@@ -43,20 +49,34 @@ def get_exchange_rate():
 
 @cache.memoize()
 def get_stock_price(symbol, currency):
-    """Fetches the current price of a stock symbol."""
+    """Fetches the current price, today's change, and recent history of a stock symbol."""
     # Yahoo Finance uses a ".T" suffix for stocks on the Tokyo Stock Exchange
     if currency == 'JPY':
         symbol += '.T'
+    
+    result = {
+        'current_price': 0.0,
+        'change_today': 0.0,
+        'sparkline_data': []
+    }
+
     try:
-        # Use a longer period to be robust against weekends/holidays
-        history = yf.Ticker(symbol).history(period="5d")
+        # Fetch 15 days of data to get 14 days for sparkline and one previous day for change
+        history = yf.Ticker(symbol).history(period="15d")
         if not history.empty:
-            return float(history['Close'].iloc[-1])
+            result['current_price'] = float(history['Close'].iloc[-1])
+            
+            # Calculate today's change if there's at least one previous day
+            if len(history['Close']) > 1:
+                result['change_today'] = float(history['Close'].iloc[-1] - history['Close'].iloc[-2])
+            
+            # Get the last 14 days for the sparkline
+            result['sparkline_data'] = list(history['Close'].tail(14))
+
     except Exception as e:
         print(f"Could not fetch price for {symbol}: {e}")
     
-    # Return 0 if price isn't found
-    return 0.0
+    return result
 
 # Database setup
 def init_db():
@@ -154,7 +174,10 @@ def _calculate_portfolio_summary(trades, exchange_rate):
             data['avg_cost_basis'] = 0
 
         # Get current market data
-        data['current_price'] = get_stock_price(data['symbol'], data['currency'])
+        market_data = get_stock_price(data['symbol'], data['currency'])
+        data['current_price'] = market_data['current_price']
+        data['change_today'] = market_data['change_today']
+        data['sparkline_data'] = market_data['sparkline_data']
         current_value_native = data['quantity'] * data['current_price']
         
         # Calculate P&L
@@ -199,22 +222,25 @@ def _calculate_portfolio_summary(trades, exchange_rate):
         'total_unrealized_pnl_jpy': total_unrealized_pnl_jpy,
     }
 
-def update_portfolio_history():
+def _ensure_history_updated(current_summary):
     """
-    Calculates and stores a daily snapshot of the portfolio's total value.
-    If there are missing days since the last snapshot, it backfills them by carrying forward the last known value.
+    Ensures the portfolio history is up-to-date with today's snapshot.
+    This is an idempotent operation that is safe to call on every request.
+    It uses the pre-calculated summary to avoid redundant work.
     """
     today_str = datetime.now().strftime('%Y-%m-%d')
-    
+    today_date = datetime.now().date()
+
     with sqlite3.connect(DATABASE) as conn:
         conn.row_factory = sqlite3.Row
-        # Check if today's snapshot already exists
+        # 1. Check if today's snapshot already exists
         if conn.execute("SELECT 1 FROM portfolio_history WHERE date = ?", (today_str,)).fetchone():
-            return # Already recorded today
+            return # Already up-to-date
 
-        # Get the most recent snapshot to backfill from
+        # 2. Backfill any missing days since the last snapshot
+        
+        # 1. Backfill any missing days since the last snapshot
         last_snapshot = conn.execute("SELECT date, value_usd, value_jpy FROM portfolio_history ORDER BY date DESC LIMIT 1").fetchone()
-
         if last_snapshot:
             last_date = datetime.strptime(last_snapshot['date'], '%Y-%m-%d').date()
             days_to_fill = (datetime.now().date() - last_date).days
@@ -222,41 +248,75 @@ def update_portfolio_history():
                 print(f"Backfilling {days_to_fill - 1} missing day(s) in portfolio history...")
                 for i in range(1, days_to_fill):
                     missing_date_str = (last_date + timedelta(days=i)).strftime('%Y-%m-%d')
+                    # Use INSERT OR IGNORE to be safe against race conditions
                     conn.execute(
                         "INSERT OR IGNORE INTO portfolio_history (date, value_usd, value_jpy) VALUES (?, ?, ?)",
                         (missing_date_str, last_snapshot['value_usd'], last_snapshot['value_jpy'])
                     )
-
-        # Calculate and insert today's value
+            # Only backfill if the last record is from before today
+            if last_date < today_date:
+                days_to_fill = (today_date - last_date).days
+                if days_to_fill > 1:
+                    print(f"Backfilling {days_to_fill - 1} missing day(s) in portfolio history...")
+                    for i in range(1, days_to_fill):
+                        missing_date_str = (last_date + timedelta(days=i)).strftime('%Y-%m-%d')
+                        # Use INSERT OR IGNORE to be safe against race conditions
+                        conn.execute(
+                            "INSERT OR IGNORE INTO portfolio_history (date, value_usd, value_jpy) VALUES (?, ?, ?)",
+                            (missing_date_str, last_snapshot['value_usd'], last_snapshot['value_jpy'])
+                        )
+        
+        # 3. Insert today's value using the provided summary
         print(f"Generating portfolio history snapshot for {today_str}...")
-        trades = conn.execute('SELECT * FROM trades ORDER BY trade_date ASC').fetchall()
-    
-    exchange_rate = get_exchange_rate()
-    summary = _calculate_portfolio_summary(trades, exchange_rate)
-    
-    with sqlite3.connect(DATABASE) as conn:
+        # 2. Insert or Update (Upsert) today's value using the provided summary.
+        # This ensures that today's value is always the most recently calculated one,
+        # correcting any previously stored incorrect (e.g., zero) values.
+        print(f"Upserting portfolio history snapshot for {today_str}...")
         conn.execute(
-            "INSERT INTO portfolio_history (date, value_usd, value_jpy) VALUES (?, ?, ?)",
-            (today_str, summary['total_value_usd'], summary['total_value_jpy'])
+            "INSERT OR IGNORE INTO portfolio_history (date, value_usd, value_jpy) VALUES (?, ?, ?)",
+            """
+            INSERT INTO portfolio_history (date, value_usd, value_jpy)
+            VALUES (?, ?, ?)
+            ON CONFLICT(date) DO UPDATE SET
+                value_usd = excluded.value_usd,
+                value_jpy = excluded.value_jpy
+            """,
+            (today_str, current_summary['total_value_usd'], current_summary['total_value_jpy'])
         )
         print(f"Saved portfolio snapshot for {today_str}.")
 
 @app.route('/')
 def index():
     """Calculates and displays a summary of current holdings from trades."""
-    update_portfolio_history() # Add daily snapshot if needed
+    # Handle cache clearing on force-refresh
+    if request.args.get('refresh') == 'true':
+        cache.clear()
+        flash('Market data cache has been cleared. Prices are now live.', 'info')
+        print("Cache cleared due to refresh request.")
+        return redirect(url_for('index'))
 
+    # 1. Get all raw data first
     exchange_rate = get_exchange_rate()
-
     with sqlite3.connect(DATABASE) as conn:
         conn.row_factory = sqlite3.Row
         trades = conn.execute('SELECT * FROM trades ORDER BY trade_date ASC').fetchall()
-        history_rows = conn.execute("SELECT date, value_jpy FROM portfolio_history ORDER BY date ASC LIMIT 365").fetchall()
-        history_data = [dict(row) for row in history_rows]
 
+    # 2. Perform the main calculation. This is now the single source of truth.
     summary = _calculate_portfolio_summary(trades, exchange_rate)
-    prices_last_updated = datetime.now().strftime('%Y-%m-%d %H:%M')
 
+    # 3. Ensure history is up-to-date, using the summary we just calculated.
+    _ensure_history_updated(summary)
+
+    # 4. Get the history data for the chart (now includes today's correct value).
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        # Fetch the latest 365 days for the chart
+        history_rows = conn.execute("SELECT date, value_jpy FROM portfolio_history ORDER BY date DESC LIMIT 365").fetchall()
+        # Reverse the list so the chart shows oldest to newest
+        history_data = [dict(row) for row in reversed(history_rows)]
+
+    # 5. Render the page
+    prices_last_updated = datetime.now().strftime('%Y-%m-%d %H:%M')
     return render_template('index.html', **summary, exchange_rate=exchange_rate, prices_last_updated=prices_last_updated, history_data=history_data, brokers=BROKERS)
 
 def generate_tax_report_data(year):

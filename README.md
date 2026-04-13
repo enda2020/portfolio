@@ -25,7 +25,19 @@ A web application for tracking a stock portfolio by logging individual trades. I
 
 ## Getting Started
 
-The recommended way to run this application is with Docker. This method ensures your database (`holdings.db`) is stored in a local `data/` folder for easy access and backup.
+### Initial Setup
+
+Before running the application, you need to create an environment file to store your secret key.
+
+1.  **Create the `.env` file:** Create a file named `.env` in the project root.
+2.  **Generate a Secret Key:** Run the following command in your terminal and copy the output:
+    ```bash
+    python -c 'import secrets; print(secrets.token_hex(32))'
+    ```
+3.  **Add the key to `.env`:** Your `.env` file should contain the following line, with the key you just generated:
+    ```
+    FLASK_SECRET_KEY=your_generated_secret_key_here
+    ```
 
 ### Option 1: Docker Compose (Easiest)
 
@@ -35,6 +47,7 @@ This is the recommended way to run the application. It uses the pre-built image 
     ```bash
     docker-compose pull
     ```
+
 2.  **Start the application:**
     ```bash
     docker-compose up -d
@@ -59,6 +72,8 @@ The application will be available at `http://localhost:5001`.
     ```
 
 ### Local Development (Without Docker)
+
+This method is suitable for making code changes and testing locally. The application will automatically use the `FLASK_SECRET_KEY` from your `.env` file.
 
 1.  Create and activate a virtual environment:
     ```bash
@@ -97,5 +112,3 @@ The workflow file is located at `.github/workflows/docker-publish.yml`.
 │   └── ...
 └── README.md              # This file
 ```
-
-

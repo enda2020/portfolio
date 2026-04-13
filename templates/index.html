@@ -8,7 +8,7 @@
         Current FX Rate: 1 USD = ¥{{ "%.2f"|format(exchange_rate) }}
         <small class="text-white-50 ms-2">(Live as of: {{ prices_last_updated }})</small>
     </span>
-    <a href="{{ url_for('index') }}" class="btn btn-sm btn-outline-light ms-3" title="Refresh Prices">
+    <a href="{{ url_for('index', refresh='true') }}" class="btn btn-sm btn-outline-light ms-3" title="Force Refresh Prices">
         <i class="fas fa-sync-alt"></i>
     </a>
 </span>
@@ -108,8 +108,10 @@
                             <th scope="col">Quantity</th>
                             <th scope="col">Avg. Cost</th>
                             <th scope="col">Current Price</th>
+                            <th scope="col">Today</th>
                             <th scope="col">Current Value (JPY)</th>
                             <th scope="col">P&L (JPY)</th>
+                            <th scope="col">14d Trend</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -121,9 +123,19 @@
                             <td><span class="sensitive-data">{{ "%.2f"|format(stock.quantity) }}</span></td>
                             <td><span class="sensitive-data">{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.avg_cost_basis) }}</span></td>
                             <td><span class="sensitive-data">{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.current_price) }}</span></td>
+                            <td class="{{ 'text-success' if stock.change_today >= 0 else 'text-danger' }}">
+                                <span class="sensitive-data">
+                                    {{- '+' if stock.change_today >= 0 else '' }}{{ "{:,.2f}".format(stock.change_today) }}
+                                </span>
+                            </td>
                             <td><span class="sensitive-data">¥{{ "{:,.0f}".format(stock.current_value_jpy) }}</span></td>
                             <td class="{{ 'text-success' if stock.pnl_jpy >= 0 else 'text-danger' }}">
                                 <span class="sensitive-data">{{- '+' if stock.pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(stock.pnl_jpy) }}</span>
+                            </td>
+                            <td>
+                                <canvas class="sparkline" 
+                                        data-sparkline-data="{{ stock.sparkline_data|tojson }}" 
+                                        width="100" height="30"></canvas>
                             </td>
                         </tr>
                         {% endfor %}
@@ -211,6 +223,46 @@ document.addEventListener('DOMContentLoaded', function () {
     
     // Initial render of the charts
     applyFilters();
+
+    // --- Sparkline Chart Rendering ---
+    function renderSparklines() {
+        const sparklineCanvases = document.querySelectorAll('.sparkline');
+        sparklineCanvases.forEach(canvas => {
+            const data = JSON.parse(canvas.dataset.sparklineData);
+            if (!data || data.length < 2) return;
+
+            const trendColor = data[data.length - 1] >= data[0] ? '#1cc88a' : '#e74a3b'; // success or danger color
+
+            new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels: Array(data.length).fill(''), // No labels
+                    datasets: [{
+                        data: data,
+                        borderColor: trendColor,
+                        borderWidth: 2,
+                        pointRadius: 0, // No points
+                        fill: false,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: false, // Use canvas width/height
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }, // No legend
+                        tooltip: { enabled: false } // No tooltips
+                    },
+                    scales: {
+                        x: { display: false }, // No x-axis
+                        y: { display: false }  // No y-axis
+                    }
+                }
+            });
+        });
+    }
+
+    renderSparklines();
 
     if (historyData && historyData.length > 0) {
         const labels = historyData.map(h => h.date);

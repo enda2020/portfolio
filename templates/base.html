@@ -12,9 +12,6 @@
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
         <div class="container">
             <a class="navbar-brand" href="{{ url_for('index') }}">Portfolio Tracker</a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarContent" aria-controls="navbarContent" aria-expanded="false" aria-label="Toggle navigation">
-                <span class="navbar-toggler-icon"></span>
-            </button>
             <div class="collapse navbar-collapse" id="navbarContent">
                 <div class="navbar-nav">
                     <a class="nav-link" href="{{ url_for('index') }}">Home</a>
@@ -25,13 +22,16 @@
                 </div>
                 <div class="navbar-nav ms-auto">
                     {% block navbar_info %}{% endblock %}
-                    <div class="nav-item mt-2 mt-lg-0">
-                        <button id="visibility-toggle" class="btn btn-outline-secondary ms-lg-2" type="button" title="Toggle value visibility">
-                            <i class="fas fa-eye-slash"></i>
-                        </button>
-                    </div>
                 </div>
             </div>
+            <!-- Visibility Toggle Button - always visible, positioned to the right of the brand, before the toggler -->
+            <button id="visibility-toggle" class="btn btn-outline-secondary btn-sm ms-auto me-2 d-flex align-items-center" type="button" title="Toggle value visibility">
+                <i class="fas fa-eye-slash"></i>
+            </button>
+            <!-- Navbar Toggler - always visible -->
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarContent" aria-controls="navbarContent" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
         </div>
     </nav>
 
@@ -60,6 +60,7 @@
             // Default to 'masked' if no state is saved
             const state = localStorage.getItem('visibilityState') || 'masked';
             const sensitiveDataElements = document.querySelectorAll('.sensitive-data');
+            const sparklines = document.querySelectorAll('.sparkline'); // Get sparkline canvases
 
             sensitiveDataElements.forEach(el => {
                 // Store the original, unmasked value if it hasn't been stored yet
@@ -72,6 +73,15 @@
                     el.textContent = MASK;
                 } else {
                     el.textContent = el.dataset.originalValue;
+                }
+            });
+
+            // Hide or show sparklines
+            sparklines.forEach(canvas => {
+                if (state === 'masked') {
+                    canvas.style.display = 'none';
+                } else {
+                    canvas.style.display = ''; // Revert to default display
                 }
             });
 
