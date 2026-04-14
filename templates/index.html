@@ -22,7 +22,7 @@
 </div>
 
 <div class="row mb-4">
-    <div class="col-lg-4 col-md-6 mb-4">
+    <div class="col-lg-3 col-md-6 mb-4">
         <div class="card text-white bg-info">
             <div class="card-header">Total Portfolio Value (JPY)</div>
             <div class="card-body">
@@ -31,7 +31,16 @@
             </div>
         </div>
     </div>
-    <div class="col-lg-4 col-md-6 mb-4">
+    <div class="col-lg-3 col-md-6 mb-4">
+        <div class="card text-white {% if total_today_pnl_jpy >= 0 %}bg-success{% else %}bg-danger{% endif %}">
+            <div class="card-header">Today's P&L</div>
+            <div class="card-body">
+                <h3 class="card-title"><span class="sensitive-data">{{- '+' if total_today_pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(total_today_pnl_jpy) }}</span></h3>
+                <p class="card-text text-white-50">≈ <span class="sensitive-data">{{ '+' if total_today_pnl_usd >= 0 else '' }}${{ "{:,.2f}".format(total_today_pnl_usd) }}</span></p>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-3 col-md-6 mb-4">
         <div class="card {{ 'text-white bg-success' if total_unrealized_pnl_jpy >= 0 else 'text-white bg-danger' }}">
             <div class="card-header">Unrealized P&L (JPY)</div>
             <div class="card-body">
@@ -40,7 +49,7 @@
             </div>
         </div>
     </div>
-    <div class="col-lg-4 col-md-6 mb-4">
+    <div class="col-lg-3 col-md-6 mb-4">
         <div class="card {{ 'text-white bg-success' if total_realized_pnl_jpy >= 0 else 'text-white bg-danger' }}">
             <div class="card-header">Total Realized P&L (JPY)</div>
             <div class="card-body">
@@ -109,8 +118,10 @@
                             <th scope="col">Avg. Cost</th>
                             <th scope="col">Current Price</th>
                             <th scope="col">Today</th>
+                            <th scope="col">% Change (1D)</th>
                             <th scope="col">Current Value (JPY)</th>
                             <th scope="col">P&L (JPY)</th>
+                            <th scope="col">Today's P&L (JPY)</th>
                             <th scope="col">14d Trend</th>
                         </tr>
                     </thead>
@@ -128,9 +139,15 @@
                                     {{- '+' if stock.change_today >= 0 else '' }}{{ "{:,.2f}".format(stock.change_today) }}
                                 </span>
                             </td>
+                            <td class="sensitive-data {{ 'text-success' if stock.change_today_percent > 0 else 'text-danger' if stock.change_today_percent < 0 else '' }}">
+                                {{ "{:+.2f}%".format(stock.change_today_percent) }}
+                            </td>
                             <td><span class="sensitive-data">¥{{ "{:,.0f}".format(stock.current_value_jpy) }}</span></td>
                             <td class="{{ 'text-success' if stock.pnl_jpy >= 0 else 'text-danger' }}">
                                 <span class="sensitive-data">{{- '+' if stock.pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(stock.pnl_jpy) }}</span>
+                            </td>
+                            <td class="sensitive-data {{ 'text-success' if stock.today_pnl_jpy > 0 else 'text-danger' if stock.today_pnl_jpy < 0 else '' }}">
+                                {{- '+' if stock.today_pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(stock.today_pnl_jpy) }}
                             </td>
                             <td>
                                 <canvas class="sparkline" 

@@ -162,6 +162,7 @@ def _calculate_portfolio_summary(trades, exchange_rate):
     total_portfolio_value_usd = 0.0
     total_realized_pnl_usd = 0.0
     total_unrealized_pnl_usd = 0.0
+    total_today_pnl_usd = 0.0
     
     for key, data in holdings.items():
         if data['quantity'] <= 0.00001: # Use a small epsilon for float comparison
@@ -178,11 +179,32 @@ def _calculate_portfolio_summary(trades, exchange_rate):
         data['current_price'] = market_data['current_price']
         data['change_today'] = market_data['change_today']
         data['sparkline_data'] = market_data['sparkline_data']
+
+        # Calculate Today's P&L for this holding
+        today_pnl_native = data['quantity'] * data['change_today']
+        data['today_pnl_native'] = today_pnl_native
+
+        # Calculate % change for today
+        prev_close = data['current_price'] - data['change_today']
+        if prev_close > 0:
+            data['change_today_percent'] = (data['change_today'] / prev_close) * 100
+        else:
+            data['change_today_percent'] = 0.0
+
         current_value_native = data['quantity'] * data['current_price']
         
         # Calculate P&L
         cost_of_holding = data['quantity'] * data['avg_cost_basis']
         data['pnl_native'] = current_value_native - cost_of_holding
+
+        # Convert Today's P&L to USD and add to total
+        today_pnl_usd = 0
+        if data['currency'] == 'JPY' and exchange_rate > 0:
+            today_pnl_usd = today_pnl_native / exchange_rate
+        else: # USD
+            today_pnl_usd = today_pnl_native
+        data['today_pnl_jpy'] = today_pnl_usd * exchange_rate
+        total_today_pnl_usd += today_pnl_usd
 
         # Convert to USD
         if data['currency'] == 'JPY' and exchange_rate > 0:
@@ -211,6 +233,7 @@ def _calculate_portfolio_summary(trades, exchange_rate):
     total_portfolio_value_jpy = total_portfolio_value_usd * exchange_rate if exchange_rate > 0 else 0
     total_realized_pnl_jpy = total_realized_pnl_usd * exchange_rate if exchange_rate > 0 else 0
     total_unrealized_pnl_jpy = total_unrealized_pnl_usd * exchange_rate if exchange_rate > 0 else 0
+    total_today_pnl_jpy = total_today_pnl_usd * exchange_rate if exchange_rate > 0 else 0
 
     return {
         'stocks': summary_list,
@@ -220,6 +243,8 @@ def _calculate_portfolio_summary(trades, exchange_rate):
         'total_realized_pnl_jpy': total_realized_pnl_jpy,
         'total_unrealized_pnl_usd': total_unrealized_pnl_usd,
         'total_unrealized_pnl_jpy': total_unrealized_pnl_jpy,
+        'total_today_pnl_usd': total_today_pnl_usd,
+        'total_today_pnl_jpy': total_today_pnl_jpy,
     }
 
 def _ensure_history_updated(current_summary):
@@ -234,25 +259,13 @@ def _ensure_history_updated(current_summary):
     with sqlite3.connect(DATABASE) as conn:
         conn.row_factory = sqlite3.Row
         # 1. Check if today's snapshot already exists
-        if conn.execute("SELECT 1 FROM portfolio_history WHERE date = ?", (today_str,)).fetchone():
-            return # Already up-to-date
+        # We don't return early, because we want to UPSERT to ensure the value is the most recent,
+        # correcting potentially stale values from earlier in the day. The UPSERT is idempotent.
 
         # 2. Backfill any missing days since the last snapshot
-        
-        # 1. Backfill any missing days since the last snapshot
         last_snapshot = conn.execute("SELECT date, value_usd, value_jpy FROM portfolio_history ORDER BY date DESC LIMIT 1").fetchone()
         if last_snapshot:
             last_date = datetime.strptime(last_snapshot['date'], '%Y-%m-%d').date()
-            days_to_fill = (datetime.now().date() - last_date).days
-            if days_to_fill > 1:
-                print(f"Backfilling {days_to_fill - 1} missing day(s) in portfolio history...")
-                for i in range(1, days_to_fill):
-                    missing_date_str = (last_date + timedelta(days=i)).strftime('%Y-%m-%d')
-                    # Use INSERT OR IGNORE to be safe against race conditions
-                    conn.execute(
-                        "INSERT OR IGNORE INTO portfolio_history (date, value_usd, value_jpy) VALUES (?, ?, ?)",
-                        (missing_date_str, last_snapshot['value_usd'], last_snapshot['value_jpy'])
-                    )
             # Only backfill if the last record is from before today
             if last_date < today_date:
                 days_to_fill = (today_date - last_date).days
@@ -260,20 +273,17 @@ def _ensure_history_updated(current_summary):
                     print(f"Backfilling {days_to_fill - 1} missing day(s) in portfolio history...")
                     for i in range(1, days_to_fill):
                         missing_date_str = (last_date + timedelta(days=i)).strftime('%Y-%m-%d')
-                        # Use INSERT OR IGNORE to be safe against race conditions
+                        # Use INSERT OR IGNORE to be safe against race conditions during backfill.
                         conn.execute(
                             "INSERT OR IGNORE INTO portfolio_history (date, value_usd, value_jpy) VALUES (?, ?, ?)",
                             (missing_date_str, last_snapshot['value_usd'], last_snapshot['value_jpy'])
                         )
         
-        # 3. Insert today's value using the provided summary
-        print(f"Generating portfolio history snapshot for {today_str}...")
-        # 2. Insert or Update (Upsert) today's value using the provided summary.
+        # 3. Insert or Update (Upsert) today's value using the provided summary.
         # This ensures that today's value is always the most recently calculated one,
         # correcting any previously stored incorrect (e.g., zero) values.
         print(f"Upserting portfolio history snapshot for {today_str}...")
         conn.execute(
-            "INSERT OR IGNORE INTO portfolio_history (date, value_usd, value_jpy) VALUES (?, ?, ?)",
             """
             INSERT INTO portfolio_history (date, value_usd, value_jpy)
             VALUES (?, ?, ?)
