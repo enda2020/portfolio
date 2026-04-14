@@ -358,6 +358,31 @@ def index():
                            selected_broker=broker_filter,
                            selected_currency=currency_filter)
 
+@app.route('/api/portfolio')
+def api_portfolio():
+    """
+    API endpoint to return portfolio summary as JSON.
+    Accepts 'broker' and 'currency' query parameters for filtering.
+    """
+    # 1. Get filters and raw data
+    broker_filter = request.args.get('broker', 'all')
+    currency_filter = request.args.get('currency', 'all')
+
+    # Convert 'all' to None for the calculation function, which expects None for no filter
+    effective_broker_filter = broker_filter if broker_filter != 'all' else None
+    effective_currency_filter = currency_filter if currency_filter != 'all' else None
+
+    exchange_rate = get_exchange_rate()
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        trades = conn.execute('SELECT * FROM trades ORDER BY trade_date ASC').fetchall()
+
+    # 2. Perform the main calculation with filters.
+    summary = _calculate_portfolio_summary(trades, exchange_rate, effective_broker_filter, effective_currency_filter)
+    
+    # 3. Return as JSON
+    return jsonify(summary)
+
 def generate_tax_report_data(year):
     """
     Generates a tax report for a given year using the moving-average cost basis method.
