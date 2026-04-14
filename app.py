@@ -108,12 +108,15 @@ def init_db():
         ''')
     print("Database tables ensured to exist.")
 
-def _calculate_portfolio_summary(trades, exchange_rate):
+def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, currency_filter=None):
     """
     Helper function to perform the main portfolio calculation.
     This is refactored out of the index() route for reuse.
     """
     # --- Aggregation Logic ---
+    # This part always runs on all trades to correctly calculate
+    # cost basis and realized P&L across the entire history, regardless of filters.
+    # Filters are applied later before calculating summary values.
     holdings = {}
     for trade in trades:
         # Aggregate by both symbol and broker for more granular tracking
@@ -165,6 +168,12 @@ def _calculate_portfolio_summary(trades, exchange_rate):
     total_today_pnl_usd = 0.0
     
     for key, data in holdings.items():
+        # Apply filters before calculating summary totals
+        if broker_filter and data['broker'] != broker_filter:
+            continue
+        if currency_filter and data['currency'] != currency_filter:
+            continue
+
         if data['quantity'] <= 0.00001: # Use a small epsilon for float comparison
             continue # Skip fully sold-off stocks
 
@@ -305,17 +314,30 @@ def index():
         print("Cache cleared due to refresh request.")
         return redirect(url_for('index'))
 
-    # 1. Get all raw data first
+    # 1. Get filters and raw data
+    broker_filter = request.args.get('broker', 'all')
+    currency_filter = request.args.get('currency', 'all')
+
+    # Convert 'all' to None for the calculation function, which expects None for no filter
+    effective_broker_filter = broker_filter if broker_filter != 'all' else None
+    effective_currency_filter = currency_filter if currency_filter != 'all' else None
+
     exchange_rate = get_exchange_rate()
     with sqlite3.connect(DATABASE) as conn:
         conn.row_factory = sqlite3.Row
         trades = conn.execute('SELECT * FROM trades ORDER BY trade_date ASC').fetchall()
 
-    # 2. Perform the main calculation. This is now the single source of truth.
-    summary = _calculate_portfolio_summary(trades, exchange_rate)
+    # 2. Perform the main calculation with filters for display. This is the single source of truth.
+    summary = _calculate_portfolio_summary(trades, exchange_rate, effective_broker_filter, effective_currency_filter)
 
-    # 3. Ensure history is up-to-date, using the summary we just calculated.
-    _ensure_history_updated(summary)
+    # 3. Ensure history is up-to-date with the TOTAL portfolio value.
+    # If filters are active, we must re-calculate the summary without them for the history.
+    if effective_broker_filter or effective_currency_filter:
+        total_summary = _calculate_portfolio_summary(trades, exchange_rate)
+        _ensure_history_updated(total_summary)
+    else:
+        # No filters active, so we can use the summary we already have
+        _ensure_history_updated(summary)
 
     # 4. Get the history data for the chart (now includes today's correct value).
     with sqlite3.connect(DATABASE) as conn:
@@ -327,7 +349,14 @@ def index():
 
     # 5. Render the page
     prices_last_updated = datetime.now().strftime('%Y-%m-%d %H:%M')
-    return render_template('index.html', **summary, exchange_rate=exchange_rate, prices_last_updated=prices_last_updated, history_data=history_data, brokers=BROKERS)
+    return render_template('index.html', 
+                           **summary, 
+                           exchange_rate=exchange_rate, 
+                           prices_last_updated=prices_last_updated, 
+                           history_data=history_data, 
+                           brokers=BROKERS,
+                           selected_broker=broker_filter,
+                           selected_currency=currency_filter)
 
 def generate_tax_report_data(year):
     """

@@ -21,6 +21,30 @@
     </div>
 </div>
 
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('index') }}" id="filterForm" class="row g-3 align-items-end">
+            <div class="col-md-4">
+                <label for="brokerFilter" class="form-label">Filter by Broker</label>
+                <select id="brokerFilter" name="broker" class="form-select">
+                    <option value="all" {% if selected_broker == 'all' %}selected{% endif %}>All Brokers</option>
+                    {% for broker in brokers %}
+                    <option value="{{ broker }}" {% if selected_broker == broker %}selected{% endif %}>{{ broker }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label for="currencyFilter" class="form-label">Filter by Currency</label>
+                <select id="currencyFilter" name="currency" class="form-select">
+                    <option value="all" {% if selected_currency == 'all' %}selected{% endif %}>All Currencies</option>
+                    <option value="USD" {% if selected_currency == 'USD' %}selected{% endif %}>USD</option>
+                    <option value="JPY" {% if selected_currency == 'JPY' %}selected{% endif %}>JPY</option>
+                </select>
+            </div>
+        </form>
+    </div>
+</div>
+
 <div class="row mb-4">
     <div class="col-lg-3 col-md-6 mb-4">
         <div class="card text-white bg-info">
@@ -75,27 +99,6 @@
         <div class="card">
             <div class="card-header">
                 <h4>Portfolio Composition (by JPY Value)</h4>
-            </div>
-            <div class="card-body pb-0">
-                <div class="row">
-                    <div class="col-md-6">
-                        <label for="brokerFilter" class="form-label form-label-sm">Broker</label>
-                        <select id="brokerFilter" class="form-select form-select-sm">
-                            <option value="all" selected>All Brokers</option>
-                            {% for broker in brokers %}
-                            <option value="{{ broker }}">{{ broker }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="col-md-6">
-                        <label for="currencyFilter" class="form-label form-label-sm">Currency</label>
-                        <select id="currencyFilter" class="form-select form-select-sm">
-                            <option value="all" selected>All Currencies</option>
-                            <option value="USD">USD</option>
-                            <option value="JPY">JPY</option>
-                        </select>
-                    </div>
-                </div>
             </div>
             <div class="card-body">
                 <canvas id="portfolioPieChart" style="max-height: 300px; max-width: 100%;"></canvas>
@@ -171,16 +174,30 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+    // The 'stocks' variable is now pre-filtered by the server.
     const stocks = {{ stocks|tojson }};
     let historyData = {{ history_data|tojson }};
     let pieChart = null; // To hold the chart instance
 
+    // --- Form auto-submission ---
     const brokerFilter = document.getElementById('brokerFilter');
     const currencyFilter = document.getElementById('currencyFilter');
+    const filterForm = document.getElementById('filterForm');
 
-    function renderPieChart(filteredStocks) {
-        const labels = filteredStocks.map(s => `${s.symbol} (${s.broker})`);
-        const data = filteredStocks.map(s => s.current_value_jpy);
+    function submitFilterForm() {
+        document.body.style.opacity = '0.5'; // Visual feedback that page is reloading
+        filterForm.submit();
+    }
+
+    if (brokerFilter && currencyFilter && filterForm) {
+        brokerFilter.addEventListener('change', submitFilterForm);
+        currencyFilter.addEventListener('change', submitFilterForm);
+    }
+
+    // --- Pie Chart Rendering ---
+    function renderPieChart(stocksToRender) {
+        const labels = stocksToRender.map(s => `${s.symbol} (${s.broker})`);
+        const data = stocksToRender.map(s => s.current_value_jpy);
 
         const pieChartData = {
             labels: labels,
@@ -213,35 +230,19 @@ document.addEventListener('DOMContentLoaded', function () {
         if (pieChart) {
             pieChart.destroy(); // Destroy old chart before creating new one
         }
-        pieChart = new Chart(ctx, pieConfig);
-    }
 
-    function applyFilters() {
-        const selectedBroker = brokerFilter.value;
-        const selectedCurrency = currencyFilter.value;
-
-        const filteredStocks = stocks.filter(stock => {
-            const brokerMatch = selectedBroker === 'all' || stock.broker === selectedBroker;
-            const currencyMatch = selectedCurrency === 'all' || stock.currency === selectedCurrency;
-            return brokerMatch && currencyMatch;
-        });
-
-        if (filteredStocks.length > 0) {
-            renderPieChart(filteredStocks);
+        if (stocksToRender && stocksToRender.length > 0) {
+            pieChart = new Chart(ctx, pieConfig);
         } else {
-            if (pieChart) pieChart.destroy();
-            pieChart = null;
-            // You could display a message here in the canvas
+            // If there are no stocks for the current filter, display a message.
+            const parent = ctx.canvas.parentElement;
+            parent.innerHTML = '<div class="text-center p-5 text-muted">No data to display for current filter.</div>';
         }
     }
-
-    brokerFilter.addEventListener('change', applyFilters);
-    currencyFilter.addEventListener('change', applyFilters);
     
-    // Initial render of the charts
-    applyFilters();
+    // Initial render of the pie chart with the server-provided (filtered) stocks
+    renderPieChart(stocks);
 
-    // --- Sparkline Chart Rendering ---
     function renderSparklines() {
         const sparklineCanvases = document.querySelectorAll('.sparkline');
         sparklineCanvases.forEach(canvas => {
