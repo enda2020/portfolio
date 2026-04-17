@@ -107,7 +107,64 @@
     </div>
 </div>
 
+<div class="card mb-4">
+    <div class="card-header">
+        <h4>Today's Overview</h4>
+    </div>
+    <div class="card-body">
+        {% if stocks %}
+            <div class="table-responsive">
+                <table class="table table-hover table-dark" style="margin-bottom: 0;">
+                    <thead>
+                        <tr>
+                            <th scope="col">Symbol</th>
+                            <th scope="col">Quantity</th>
+                            <th scope="col">Avg. Cost</th>
+                            <th scope="col">Current Price</th>
+                            <th scope="col">Today</th>
+                            <th scope="col">Today's P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for stock in stocks %}
+                        <tr>
+                            <td><strong>{{ stock.symbol }}</strong></td>
+                            <td><span class="sensitive-data">{{ "%.2f"|format(stock.quantity) }}</span></td>
+                            <td><span class="sensitive-data">{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.avg_cost_basis) }}</span></td>
+                            <td><span class="sensitive-data">{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.current_price) }}</span></td>
+                            <td class="{{ 'text-success' if stock.change_today >= 0 else 'text-danger' }}">
+                                <span class="sensitive-data">
+                                    {{- '+' if stock.change_today >= 0 else '' }}{{ "{:,.2f}".format(stock.change_today) }}
+                                </span>
+                            </td>
+                            <td class="sensitive-data {{ 'text-success' if stock.today_pnl_jpy > 0 else 'text-danger' if stock.today_pnl_jpy < 0 else '' }}">
+                                {{- '+' if stock.today_pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(stock.today_pnl_jpy) }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot>
+                        <tr class="table-active">
+                            <td colspan="5" class="text-end"><strong>Total Today's P&L:</strong></td>
+                            <td class="sensitive-data {{ 'text-success' if total_today_pnl_jpy > 0 else 'text-danger' if total_today_pnl_jpy < 0 else '' }}">
+                                <strong>{{- '+' if total_today_pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(total_today_pnl_jpy) }}</strong>
+                            </td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        {% else %}
+            <div class="text-center p-3">
+                <p class="mb-0">No holdings to display.</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
 <div class="card">
+    <div class="card-header">
+        <h4>Full Portfolio</h4>
+    </div>
     <div class="card-body">
         {% if stocks %}
             <div class="table-responsive">
