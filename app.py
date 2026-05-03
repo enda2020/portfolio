@@ -38,11 +38,22 @@ BROKERS = ['Monex', 'Interactive Brokers']
 @cache.memoize()
 def get_exchange_rate():
     """Fetches the current USD/JPY exchange rate."""
+    print("--- CACHE MISS: Fetching live USD/JPY exchange rate from yfinance ---")
     try:
         # Use a longer period to be robust against weekends/holidays
         history = yf.Ticker("JPY=X").history(period="5d")
+        print("--- yfinance response for JPY=X ---")
+        print(history)
         if not history.empty:
             return float(history['Close'].iloc[-1])
+        if not history.empty and ('Close' in history.columns or 'close' in history.columns):
+            # The column name can be 'Close' or 'close'. For the most recent entry,
+            # this value represents the "last price", not necessarily a closing price.
+            price_col = 'Close' if 'Close' in history.columns else 'close'
+            last_price = float(history[price_col].iloc[-1])
+            last_date = history.index[-1].strftime('%Y-%m-%d')
+            print(f"--- Using last available price for JPY=X from {last_date}: {last_price} ---")
+            return last_price
     except Exception as e:
         print(f"Could not fetch exchange rate: {e}. Defaulting to 150.")
     return 150.0 # Return a default value if API fails
@@ -50,10 +61,13 @@ def get_exchange_rate():
 @cache.memoize()
 def get_stock_price(symbol, currency):
     """Fetches the current price, today's change, and recent history of a stock symbol."""
+    api_symbol = symbol
     # Yahoo Finance uses a ".T" suffix for stocks on the Tokyo Stock Exchange
     if currency == 'JPY':
-        symbol += '.T'
+        api_symbol += '.T'
     
+    print(f"--- CACHE MISS: Fetching live market data for {symbol} (API symbol: {api_symbol}) from yfinance ---")
+
     result = {
         'current_price': 0.0,
         'change_today': 0.0,
@@ -62,16 +76,29 @@ def get_stock_price(symbol, currency):
 
     try:
         # Fetch 15 days of data to get 14 days for sparkline and one previous day for change
-        history = yf.Ticker(symbol).history(period="15d")
+        history = yf.Ticker(api_symbol).history(period="15d")
+        print(f"--- yfinance response for {api_symbol} ---")
+        print(history)
         if not history.empty:
             result['current_price'] = float(history['Close'].iloc[-1])
+        if not history.empty and ('Close' in history.columns or 'close' in history.columns):
+            # The column name can be 'Close' or 'close'. For the most recent entry,
+            # this value represents the "last price", not necessarily a closing price.
+            price_col = 'Close' if 'Close' in history.columns else 'close'
+
+            result['current_price'] = float(history[price_col].iloc[-1])
+            last_date = history.index[-1].strftime('%Y-%m-%d')
+            print(f"--- Using last available price for {symbol} from {last_date}: {result['current_price']} ---")
             
             # Calculate today's change if there's at least one previous day
             if len(history['Close']) > 1:
                 result['change_today'] = float(history['Close'].iloc[-1] - history['Close'].iloc[-2])
+            if len(history[price_col]) > 1:
+                result['change_today'] = float(history[price_col].iloc[-1] - history[price_col].iloc[-2])
             
             # Get the last 14 days for the sparkline
             result['sparkline_data'] = list(history['Close'].tail(14))
+            result['sparkline_data'] = list(history[price_col].tail(14))
 
     except Exception as e:
         print(f"Could not fetch price for {symbol}: {e}")
