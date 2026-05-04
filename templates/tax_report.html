@@ -11,6 +11,7 @@
         <div class="card mb-4">
             <div class="card-body">
                 <form method="POST" class="row align-items-end">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <div class="col-md-4">
                         <label for="year" class="form-label">Select Financial Year</label>
                         <select name="year" id="year" class="form-select">

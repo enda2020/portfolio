@@ -11,6 +11,7 @@
             </div>
             <div class="card-body">
                 <form method="POST" action="{{ url_for('add_trade') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <div class="mb-3">
                         <label for="trade_date" class="form-label">Date</label>
                         <input type="date" class="form-control" id="trade_date" name="trade_date" value="{{ today }}" required>

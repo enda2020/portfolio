@@ -1,0 +1,244 @@
+{% extends "base.html" %}
+
+{% block title %}Portfolio Health{% endblock %}
+
+{% block navbar_info %}
+<span class="navbar-text d-flex align-items-start">
+    <span>
+        <small class="text-white-50 d-block">
+            Checked: {{ prices_last_updated }}
+            {% if latest_market_data_at %}
+                | Yahoo quotes: {{ oldest_market_data_at }}{% if oldest_market_data_at != latest_market_data_at %} to {{ latest_market_data_at }}{% endif %}
+            {% endif %}
+            {% if fx_latest_data_at %}| FX: {{ fx_latest_data_at }}{% endif %}
+        </small>
+    </span>
+</span>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="mb-0">Portfolio Health</h1>
+    <div>
+        <a href="{{ url_for('health_settings') }}" class="btn btn-outline-info me-2">
+            <i class="fas fa-sliders me-1"></i> Settings
+        </a>
+        <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left me-1"></i> Dashboard
+        </a>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-lg-4 mb-4">
+        <div class="card h-100">
+            <div class="card-header">Health Score</div>
+            <div class="card-body">
+                <div class="d-flex align-items-end gap-3 mb-3">
+                    <div class="display-4 fw-bold">{{ health.score }}</div>
+                    <div class="pb-2 text-muted">/ 100</div>
+                </div>
+                <h4 class="mb-3">{{ health.score_label }}</h4>
+                <div class="progress" style="height: 12px;">
+                    <div class="progress-bar {% if health.score >= 85 %}bg-success{% elif health.score >= 70 %}bg-info{% elif health.score >= 50 %}bg-warning{% else %}bg-danger{% endif %}"
+                         role="progressbar"
+                         style="width: {{ health.score }}%;"
+                         aria-valuenow="{{ health.score }}"
+                         aria-valuemin="0"
+                         aria-valuemax="100"></div>
+                </div>
+                <p class="text-muted small mt-3 mb-0">Based on your editable health thresholds, classification coverage, and diversification count.</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4 mb-4">
+        <div class="card h-100">
+            <div class="card-header">Largest Holding</div>
+            <div class="card-body">
+                {% if health.top_stock %}
+                <h3>{{ health.top_stock.symbol }}</h3>
+                <p class="mb-2">{{ health.top_stock.name }}</p>
+                <div class="h4 sensitive-data">¥{{ "{:,.0f}".format(health.top_stock.current_value_jpy) }}</div>
+                <div class="text-muted">{{ "%.1f"|format(health.top_stock.weight_percent) }}% of portfolio</div>
+                {% else %}
+                <p class="mb-0 text-muted">No open holdings.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4 mb-4">
+        <div class="card h-100">
+            <div class="card-header">Largest Sector</div>
+            <div class="card-body">
+                {% if health.top_sector %}
+                <h3>{{ health.top_sector.sector }}</h3>
+                <div class="h4 sensitive-data">¥{{ "{:,.0f}".format(health.top_sector.value_jpy) }}</div>
+                <div class="text-muted mb-2">{{ "%.1f"|format(health.top_sector.weight_percent) }}% of portfolio</div>
+                <p class="small mb-0">{{ health.top_sector.holdings|join(', ') }}</p>
+                {% else %}
+                <p class="mb-0 text-muted">No sector data yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-lg-7 mb-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <h4 class="mb-0">Checks</h4>
+            </div>
+            <div class="card-body">
+                {% for check in health.checks %}
+                <div class="alert alert-{{ check.severity }} mb-3">
+                    <strong>{{ check.title }}</strong><br>
+                    {{ check.detail }}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5 mb-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <h4 class="mb-0">Rebalance Ideas</h4>
+            </div>
+            <div class="card-body">
+                {% if health.ideas %}
+                    {% for idea in health.ideas %}
+                    <div class="mb-3">
+                        <div class="fw-bold">{{ idea.title }}</div>
+                        <div class="text-muted">{{ idea.detail }}</div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="mb-0 text-muted">No rebalance ideas triggered by the current thresholds.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-lg-5 mb-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <h4 class="mb-0">Sector Allocation</h4>
+            </div>
+            <div class="card-body">
+                <canvas id="sectorChart" style="max-height: 300px;"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-7 mb-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <h4 class="mb-0">Sector Breakdown</h4>
+            </div>
+            <div class="card-body">
+                {% if health.sectors %}
+                <div class="table-responsive">
+                    <table class="table table-hover table-dark mb-0">
+                        <thead>
+                            <tr>
+                                <th>Sector</th>
+                                <th>Weight</th>
+                                <th>Value</th>
+                                <th>Holdings</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for sector in health.sectors %}
+                            <tr>
+                                <td>{{ sector.sector }}</td>
+                                <td>{{ "%.1f"|format(sector.weight_percent) }}%</td>
+                                <td class="sensitive-data">¥{{ "{:,.0f}".format(sector.value_jpy) }}</td>
+                                <td>{{ sector.holdings|join(', ') }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="mb-0 text-muted">No sector data to display.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">
+        <h4 class="mb-0">Holding Weights</h4>
+    </div>
+    <div class="card-body">
+        {% if health.stocks %}
+        <div class="table-responsive">
+            <table class="table table-hover table-dark mb-0">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Broker</th>
+                        <th>Sector</th>
+                        <th>Industry</th>
+                        <th>Weight</th>
+                        <th>Value</th>
+                        <th>Current P&L</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for stock in health.stocks %}
+                    <tr>
+                        <td><strong>{{ stock.symbol }}</strong></td>
+                        <td>{{ stock.broker }}</td>
+                        <td>{{ stock.sector }}</td>
+                        <td>{{ stock.industry }}</td>
+                        <td>{{ "%.1f"|format(stock.weight_percent) }}%</td>
+                        <td class="sensitive-data">¥{{ "{:,.0f}".format(stock.current_value_jpy) }}</td>
+                        <td class="sensitive-data {{ 'text-success' if stock.pnl_jpy >= 0 else 'text-danger' }}">
+                            {{ '+' if stock.pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(stock.pnl_jpy) }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="mb-0 text-muted">No open holdings to check.</p>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const sectors = {{ health.sectors|tojson }};
+    const canvas = document.getElementById('sectorChart');
+    if (!canvas || !sectors || sectors.length === 0) return;
+
+    new Chart(canvas, {
+        type: 'doughnut',
+        data: {
+            labels: sectors.map(s => s.sector),
+            datasets: [{
+                data: sectors.map(s => s.value_jpy),
+                backgroundColor: [
+                    '#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b',
+                    '#858796', '#20c997', '#fd7e14', '#e83e8c', '#6f42c1'
+                ],
+                hoverOffset: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'right'
+                }
+            }
+        }
+    });
+});
+</script>
+{% endblock %}

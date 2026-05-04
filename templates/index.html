@@ -3,10 +3,15 @@
 {% block title %}Portfolio Dashboard{% endblock %}
 
 {% block navbar_info %}
-<span class="navbar-text d-flex align-items-center">
+<span class="navbar-text d-flex align-items-start">
     <span>
-        Current FX Rate: 1 USD = ¥{{ "%.2f"|format(exchange_rate) }}
-        <small class="text-white-50 ms-2">(Live as of: {{ prices_last_updated }})</small>
+        <small class="text-white-50 d-block">
+            Checked: {{ prices_last_updated }}
+            {% if latest_market_data_at %}
+                | Yahoo quotes: {{ oldest_market_data_at }}{% if oldest_market_data_at != latest_market_data_at %} to {{ latest_market_data_at }}{% endif %}
+            {% endif %}
+            {% if fx_latest_data_at %}| FX: {{ fx_latest_data_at }}{% endif %}
+        </small>
     </span>
     <a href="{{ url_for('index', refresh='true') }}" class="btn btn-sm btn-outline-light ms-3" title="Force Refresh Prices">
         <i class="fas fa-sync-alt"></i>
@@ -253,7 +258,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // --- Pie Chart Rendering ---
     function renderPieChart(stocksToRender) {
-        const labels = stocksToRender.map(s => `${s.symbol} (${s.broker})`);
+        const labels = stocksToRender.map(s => s.broker ? `${s.symbol} (${s.broker})` : s.symbol);
         const data = stocksToRender.map(s => s.current_value_jpy);
 
         const pieChartData = {

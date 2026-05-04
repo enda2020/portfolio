@@ -1,10 +1,11 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify, flash, Response
+from flask import Flask, render_template, request, redirect, url_for, jsonify, flash, Response, abort, session
 import sqlite3
 import yfinance as yf
 from datetime import datetime, timedelta
 import csv
 import io
 import os
+import secrets
 from flask_caching import Cache
 from dotenv import load_dotenv
 
@@ -34,6 +35,24 @@ cache = Cache(app)
 DATA_DIR = os.path.join(basedir, 'data')
 DATABASE = os.path.join(DATA_DIR, 'holdings.db')
 BROKERS = ['Monex', 'Interactive Brokers']
+HEALTH_SETTING_DEFAULTS = {
+    'single_stock_warning_percent': 25.0,
+    'single_stock_danger_percent': 35.0,
+    'single_stock_target_percent': 25.0,
+    'sector_warning_percent': 35.0,
+    'sector_danger_percent': 50.0,
+    'min_holdings_count': 5,
+    'max_rebalance_ideas': 6,
+}
+HEALTH_SETTING_LABELS = {
+    'single_stock_warning_percent': 'Single Stock Warning (%)',
+    'single_stock_danger_percent': 'Single Stock Danger (%)',
+    'single_stock_target_percent': 'Single Stock Target (%)',
+    'sector_warning_percent': 'Sector Warning (%)',
+    'sector_danger_percent': 'Sector Danger (%)',
+    'min_holdings_count': 'Minimum Holdings Count',
+    'max_rebalance_ideas': 'Maximum Rebalance Ideas',
+}
 
 @cache.memoize()
 def get_exchange_rate():
@@ -44,19 +63,20 @@ def get_exchange_rate():
         history = yf.Ticker("JPY=X").history(period="5d")
         print("--- yfinance response for JPY=X ---")
         print(history)
-        if not history.empty:
-            return float(history['Close'].iloc[-1])
         if not history.empty and ('Close' in history.columns or 'close' in history.columns):
             # The column name can be 'Close' or 'close'. For the most recent entry,
             # this value represents the "last price", not necessarily a closing price.
             price_col = 'Close' if 'Close' in history.columns else 'close'
             last_price = float(history[price_col].iloc[-1])
-            last_date = history.index[-1].strftime('%Y-%m-%d')
-            print(f"--- Using last available price for JPY=X from {last_date}: {last_price} ---")
-            return last_price
+            latest_data_at, _ = _format_market_timestamp(history.index[-1])
+            print(f"--- Using last available price for JPY=X from {latest_data_at}: {last_price} ---")
+            return {
+                'rate': last_price,
+                'latest_data_at': latest_data_at
+            }
     except Exception as e:
-        print(f"Could not fetch exchange rate: {e}. Defaulting to 150.")
-    return 150.0 # Return a default value if API fails
+        print(f"Could not fetch exchange rate: {e}.")
+    return None
 
 @cache.memoize()
 def get_stock_price(symbol, currency):
@@ -71,7 +91,10 @@ def get_stock_price(symbol, currency):
     result = {
         'current_price': 0.0,
         'change_today': 0.0,
-        'sparkline_data': []
+        'sparkline_data': [],
+        'is_valid': False,
+        'latest_data_at': None,
+        'latest_data_sort': None
     }
 
     try:
@@ -79,31 +102,383 @@ def get_stock_price(symbol, currency):
         history = yf.Ticker(api_symbol).history(period="15d")
         print(f"--- yfinance response for {api_symbol} ---")
         print(history)
-        if not history.empty:
-            result['current_price'] = float(history['Close'].iloc[-1])
         if not history.empty and ('Close' in history.columns or 'close' in history.columns):
             # The column name can be 'Close' or 'close'. For the most recent entry,
             # this value represents the "last price", not necessarily a closing price.
             price_col = 'Close' if 'Close' in history.columns else 'close'
 
             result['current_price'] = float(history[price_col].iloc[-1])
-            last_date = history.index[-1].strftime('%Y-%m-%d')
-            print(f"--- Using last available price for {symbol} from {last_date}: {result['current_price']} ---")
+            result['is_valid'] = True
+            result['latest_data_at'], result['latest_data_sort'] = _format_market_timestamp(history.index[-1])
+            print(f"--- Using last available price for {symbol} from {result['latest_data_at']}: {result['current_price']} ---")
             
             # Calculate today's change if there's at least one previous day
-            if len(history['Close']) > 1:
-                result['change_today'] = float(history['Close'].iloc[-1] - history['Close'].iloc[-2])
             if len(history[price_col]) > 1:
                 result['change_today'] = float(history[price_col].iloc[-1] - history[price_col].iloc[-2])
             
             # Get the last 14 days for the sparkline
-            result['sparkline_data'] = list(history['Close'].tail(14))
             result['sparkline_data'] = list(history[price_col].tail(14))
 
     except Exception as e:
         print(f"Could not fetch price for {symbol}: {e}")
     
     return result
+
+@cache.memoize(timeout=86400)
+def get_stock_profile(symbol, currency):
+    """Fetches slower-changing stock metadata used by portfolio health checks."""
+    api_symbol = symbol
+    if currency == 'JPY':
+        api_symbol += '.T'
+
+    result = {
+        'sector': 'Unclassified',
+        'industry': 'Unclassified',
+        'quote_type': None,
+        'is_valid': False
+    }
+
+    try:
+        info = yf.Ticker(api_symbol).get_info()
+        quote_type = info.get('quoteType')
+        sector = info.get('sector')
+        industry = info.get('industry')
+
+        if not sector and quote_type in ['ETF', 'MUTUALFUND']:
+            sector = 'Fund / ETF'
+        if not industry and quote_type in ['ETF', 'MUTUALFUND']:
+            industry = 'Diversified Fund'
+
+        result.update({
+            'sector': sector or 'Unclassified',
+            'industry': industry or 'Unclassified',
+            'quote_type': quote_type,
+            'is_valid': bool(sector or industry or quote_type)
+        })
+    except Exception as e:
+        print(f"Could not fetch profile for {symbol}: {e}")
+
+    return result
+
+def _percent(value, total):
+    return (value / total) * 100 if total else 0
+
+def _format_market_timestamp(timestamp):
+    """Returns display and sortable forms for the latest timestamp from yfinance."""
+    if timestamp is None:
+        return None, None
+
+    try:
+        if hasattr(timestamp, 'to_pydatetime'):
+            dt = timestamp.to_pydatetime()
+        elif isinstance(timestamp, datetime):
+            dt = timestamp
+        else:
+            return str(timestamp), str(timestamp)
+
+        if dt.hour == 0 and dt.minute == 0 and dt.second == 0:
+            display = dt.strftime('%Y-%m-%d')
+        else:
+            display = dt.strftime('%Y-%m-%d %H:%M %Z').strip()
+        return display, dt.timestamp()
+    except Exception:
+        return str(timestamp), str(timestamp)
+
+def _calculate_portfolio_health(summary, settings=None):
+    """Creates concentration checks and rebalance ideas from the current holdings summary."""
+    settings = settings or HEALTH_SETTING_DEFAULTS.copy()
+    stocks = summary['stocks']
+    total_value = summary['total_value_jpy']
+    checks = []
+    ideas = []
+    sector_map = {}
+    score = 100
+
+    for stock in stocks:
+        profile = get_stock_profile(stock['symbol'], stock['currency'])
+        stock['sector'] = profile['sector']
+        stock['industry'] = profile['industry']
+        stock['weight_percent'] = _percent(stock['current_value_jpy'], total_value)
+
+        sector = stock['sector']
+        if sector not in sector_map:
+            sector_map[sector] = {
+                'sector': sector,
+                'value_jpy': 0,
+                'weight_percent': 0,
+                'holdings': []
+            }
+        sector_map[sector]['value_jpy'] += stock['current_value_jpy']
+        sector_map[sector]['holdings'].append(stock['symbol'])
+
+    sectors = list(sector_map.values())
+    for sector in sectors:
+        sector['weight_percent'] = _percent(sector['value_jpy'], total_value)
+        sector['holdings'] = sorted(set(sector['holdings']))
+
+    top_stock = max(stocks, key=lambda s: s['weight_percent'], default=None)
+    top_sector = max(sectors, key=lambda s: s['weight_percent'], default=None)
+
+    if not stocks:
+        return {
+            'score': 0,
+            'score_label': 'No holdings',
+            'checks': [{
+                'severity': 'info',
+                'title': 'No open holdings',
+                'detail': 'Add trades before running portfolio health checks.'
+            }],
+            'ideas': [],
+            'sectors': [],
+            'stocks': [],
+            'settings': settings,
+        }
+
+    for stock in stocks:
+        if stock['weight_percent'] >= settings['single_stock_danger_percent']:
+            score -= 25
+            checks.append({
+                'severity': 'danger',
+                'title': f"{stock['symbol']} is very concentrated",
+                'detail': f"{stock['symbol']} is {stock['weight_percent']:.1f}% of the portfolio."
+            })
+            target_percent = settings['single_stock_target_percent']
+            target_value = total_value * (target_percent / 100)
+            excess_value = max(0, stock['current_value_jpy'] - target_value)
+            ideas.append({
+                'title': f"Bring {stock['symbol']} closer to {target_percent:g}%",
+                'detail': f"To reach {target_percent:g}%, reduce or offset about ¥{excess_value:,.0f} of exposure with future buys or trims."
+            })
+        elif stock['weight_percent'] >= settings['single_stock_warning_percent']:
+            score -= 12
+            checks.append({
+                'severity': 'warning',
+                'title': f"{stock['symbol']} is above the single-stock watch level",
+                'detail': f"{stock['symbol']} is {stock['weight_percent']:.1f}% of the portfolio."
+            })
+            ideas.append({
+                'title': f"Pause new buys into {stock['symbol']}",
+                'detail': "Direct new contributions toward lower-weight holdings until this position drops below 25%."
+            })
+
+    for sector in sectors:
+        if sector['weight_percent'] >= settings['sector_danger_percent']:
+            score -= 20
+            checks.append({
+                'severity': 'danger',
+                'title': f"{sector['sector']} sector is very overweight",
+                'detail': f"{sector['sector']} is {sector['weight_percent']:.1f}% across {', '.join(sector['holdings'])}."
+            })
+            ideas.append({
+                'title': f"Reduce dependence on {sector['sector']}",
+                'detail': "Consider adding to sectors with little or no exposure before adding more here."
+            })
+        elif sector['weight_percent'] >= settings['sector_warning_percent']:
+            score -= 10
+            checks.append({
+                'severity': 'warning',
+                'title': f"{sector['sector']} sector is above the watch level",
+                'detail': f"{sector['sector']} is {sector['weight_percent']:.1f}% across {', '.join(sector['holdings'])}."
+            })
+
+    unclassified = [stock['symbol'] for stock in stocks if stock['sector'] == 'Unclassified']
+    if unclassified:
+        score -= min(10, len(unclassified) * 2)
+        checks.append({
+            'severity': 'info',
+            'title': 'Some holdings could not be classified',
+            'detail': f"Sector data is missing for {', '.join(unclassified)}."
+        })
+
+    if len(stocks) < settings['min_holdings_count']:
+        score -= 10
+        checks.append({
+            'severity': 'warning',
+            'title': 'Limited number of holdings',
+            'detail': f"The portfolio has {len(stocks)} open holding{'s' if len(stocks) != 1 else ''}."
+        })
+        ideas.append({
+            'title': 'Add diversification with new contributions',
+            'detail': 'New buys can target assets or sectors not already represented in the portfolio.'
+        })
+
+    if not checks:
+        checks.append({
+            'severity': 'success',
+            'title': 'No major concentration issues found',
+            'detail': 'Single-stock and sector weights are within the current watch levels.'
+        })
+
+    score = max(0, min(100, round(score)))
+    if score >= 85:
+        score_label = 'Healthy'
+    elif score >= 70:
+        score_label = 'Watch'
+    elif score >= 50:
+        score_label = 'Needs attention'
+    else:
+        score_label = 'High concentration risk'
+
+    return {
+        'score': score,
+        'score_label': score_label,
+        'checks': checks,
+        'ideas': ideas[:int(settings['max_rebalance_ideas'])],
+        'sectors': sorted(sectors, key=lambda s: s['weight_percent'], reverse=True),
+        'stocks': sorted(stocks, key=lambda s: s['weight_percent'], reverse=True),
+        'top_stock': top_stock,
+        'top_sector': top_sector,
+        'settings': settings,
+    }
+
+@app.context_processor
+def inject_csrf_token():
+    """Makes a per-session CSRF token available to all templates."""
+    if 'csrf_token' not in session:
+        session['csrf_token'] = secrets.token_urlsafe(32)
+    return {'csrf_token': session['csrf_token']}
+
+def _validate_csrf_token():
+    token = session.get('csrf_token')
+    if not token or not secrets.compare_digest(token, request.form.get('csrf_token', '')):
+        abort(400)
+
+def _parse_optional_float(value):
+    value = (value or '').strip()
+    return float(value) if value else None
+
+def _parse_trade_form(form):
+    """Validates trade form input and returns normalized values plus errors."""
+    errors = []
+    values = {
+        'symbol': form.get('symbol', '').strip().upper(),
+        'name': form.get('name', '').strip(),
+        'trade_type': form.get('trade_type', '').strip().upper(),
+        'quantity': None,
+        'price': None,
+        'currency': form.get('currency', '').strip().upper(),
+        'trade_date': form.get('trade_date', '').strip(),
+        'broker': form.get('broker', '').strip(),
+        'fx_rate': None,
+        'fee_amount': None,
+        'fee_currency': form.get('fee_currency', '').strip().upper() or None
+    }
+
+    required_fields = ['symbol', 'name', 'trade_type', 'currency', 'trade_date', 'broker']
+    for field in required_fields:
+        if not values[field]:
+            errors.append(f"{field.replace('_', ' ').title()} is required.")
+
+    if values['trade_type'] and values['trade_type'] not in ['BUY', 'SELL']:
+        errors.append("Trade type must be BUY or SELL.")
+    if values['currency'] and values['currency'] not in ['USD', 'JPY']:
+        errors.append("Currency must be USD or JPY.")
+    if values['broker'] and values['broker'] not in BROKERS:
+        errors.append("Broker is not recognized.")
+    if values['fee_currency'] and values['fee_currency'] not in ['USD', 'JPY']:
+        errors.append("Fee currency must be USD or JPY.")
+
+    try:
+        values['quantity'] = float(form.get('quantity', ''))
+        if values['quantity'] <= 0:
+            errors.append("Quantity must be positive.")
+    except (TypeError, ValueError):
+        errors.append("Quantity must be a valid number.")
+
+    try:
+        values['price'] = float(form.get('price', ''))
+        if values['price'] < 0:
+            errors.append("Price cannot be negative.")
+    except (TypeError, ValueError):
+        errors.append("Price must be a valid number.")
+
+    try:
+        values['fx_rate'] = _parse_optional_float(form.get('fx_rate'))
+        if values['fx_rate'] is not None and values['fx_rate'] <= 0:
+            errors.append("FX rate must be positive.")
+    except ValueError:
+        errors.append("FX rate must be a valid number.")
+
+    try:
+        values['fee_amount'] = _parse_optional_float(form.get('fee_amount'))
+        if values['fee_amount'] is not None and values['fee_amount'] < 0:
+            errors.append("Broker fee cannot be negative.")
+    except ValueError:
+        errors.append("Broker fee must be a valid number.")
+
+    try:
+        datetime.strptime(values['trade_date'], '%Y-%m-%d')
+    except ValueError:
+        errors.append("Trade date must be in YYYY-MM-DD format.")
+
+    return values, errors
+
+def get_health_settings():
+    """Loads health-check thresholds from the database, seeding defaults if needed."""
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.executemany(
+            "INSERT OR IGNORE INTO health_settings (key, value) VALUES (?, ?)",
+            [(key, str(value)) for key, value in HEALTH_SETTING_DEFAULTS.items()]
+        )
+        rows = conn.execute("SELECT key, value FROM health_settings").fetchall()
+
+    settings = HEALTH_SETTING_DEFAULTS.copy()
+    for row in rows:
+        key = row['key']
+        if key not in settings:
+            continue
+        if key in ['min_holdings_count', 'max_rebalance_ideas']:
+            settings[key] = int(float(row['value']))
+        else:
+            settings[key] = float(row['value'])
+    return settings
+
+def _parse_health_settings_form(form):
+    settings = {}
+    errors = []
+    integer_keys = ['min_holdings_count', 'max_rebalance_ideas']
+
+    for key, default in HEALTH_SETTING_DEFAULTS.items():
+        raw_value = (form.get(key, '') or '').strip()
+        label = HEALTH_SETTING_LABELS[key]
+        try:
+            if key in integer_keys:
+                value = int(raw_value)
+            else:
+                value = float(raw_value)
+        except ValueError:
+            errors.append(f"{label} must be a valid number.")
+            settings[key] = default
+            continue
+
+        if key.endswith('_percent') and not 0 <= value <= 100:
+            errors.append(f"{label} must be between 0 and 100.")
+        if key == 'min_holdings_count' and value < 1:
+            errors.append("Minimum Holdings Count must be at least 1.")
+        if key == 'max_rebalance_ideas' and not 1 <= value <= 20:
+            errors.append("Maximum Rebalance Ideas must be between 1 and 20.")
+        settings[key] = value
+
+    if settings['single_stock_warning_percent'] > settings['single_stock_danger_percent']:
+        errors.append("Single Stock Warning must be less than or equal to Single Stock Danger.")
+    if settings['sector_warning_percent'] > settings['sector_danger_percent']:
+        errors.append("Sector Warning must be less than or equal to Sector Danger.")
+    if settings['single_stock_target_percent'] > settings['single_stock_warning_percent']:
+        errors.append("Single Stock Target should be less than or equal to Single Stock Warning.")
+
+    return settings, errors
+
+def save_health_settings(settings):
+    with sqlite3.connect(DATABASE) as conn:
+        conn.executemany(
+            """
+            INSERT INTO health_settings (key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            [(key, str(value)) for key, value in settings.items()]
+        )
 
 # Database setup
 def init_db():
@@ -133,6 +508,16 @@ def init_db():
                 value_jpy REAL NOT NULL
             )
         ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS health_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        ''')
+        conn.executemany(
+            "INSERT OR IGNORE INTO health_settings (key, value) VALUES (?, ?)",
+            [(key, str(value)) for key, value in HEALTH_SETTING_DEFAULTS.items()]
+        )
     print("Database tables ensured to exist.")
 
 def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, currency_filter=None):
@@ -156,7 +541,6 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
                 'currency': trade['currency'],
                 'quantity': 0,
                 'total_cost': 0,
-                'total_shares_bought': 0,
                 'realized_pnl_native': 0
             }
         
@@ -175,25 +559,26 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
         if trade['trade_type'] == 'BUY':
             holdings[key]['quantity'] += trade['quantity']
             holdings[key]['total_cost'] += (trade['quantity'] * trade['price']) + fee_in_native_currency
-            holdings[key]['total_shares_bought'] += trade['quantity']
         elif trade['trade_type'] == 'SELL':
             avg_cost_basis = 0
-            if holdings[key]['total_shares_bought'] > 0:
-                avg_cost_basis = holdings[key]['total_cost'] / holdings[key]['total_shares_bought']
+            if holdings[key]['quantity'] > 0:
+                avg_cost_basis = holdings[key]['total_cost'] / holdings[key]['quantity']
             
             cost_of_shares_sold = trade['quantity'] * avg_cost_basis
             proceeds = (trade['quantity'] * trade['price']) - fee_in_native_currency
             
             holdings[key]['realized_pnl_native'] += proceeds - cost_of_shares_sold
             holdings[key]['quantity'] -= trade['quantity']
+            holdings[key]['total_cost'] -= cost_of_shares_sold
 
-    # --- Enrichment and Summary ---
+    # --- Combine display rows ---
+    # Keep the broker-level accounting above, then combine open holdings for display.
+    # This avoids fetching and showing duplicate rows for the same ticker while preserving
+    # each broker's own sale history and cost basis.
+    combined_holdings = {}
     summary_list = []
-    total_portfolio_value_usd = 0.0
     total_realized_pnl_usd = 0.0
-    total_unrealized_pnl_usd = 0.0
-    total_today_pnl_usd = 0.0
-    
+
     for key, data in holdings.items():
         # Apply filters before calculating summary totals
         if broker_filter and data['broker'] != broker_filter:
@@ -201,20 +586,61 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
         if currency_filter and data['currency'] != currency_filter:
             continue
 
+        realized_pnl_native = data['realized_pnl_native']
+        if data['currency'] == 'JPY' and exchange_rate > 0:
+            total_realized_pnl_usd += realized_pnl_native / exchange_rate
+        else:
+            total_realized_pnl_usd += realized_pnl_native
+
         if data['quantity'] <= 0.00001: # Use a small epsilon for float comparison
-            continue # Skip fully sold-off stocks
+            continue # Skip display and market-data lookup for fully sold-off stocks
+
+        combined_key = (data['symbol'], data['currency'])
+        if combined_key not in combined_holdings:
+            combined_holdings[combined_key] = {
+                'symbol': data['symbol'],
+                'broker': data['broker'],
+                'brokers': [data['broker']],
+                'name': data['name'],
+                'currency': data['currency'],
+                'quantity': 0,
+                'total_cost': 0,
+            }
+        elif data['broker'] not in combined_holdings[combined_key]['brokers']:
+            combined_holdings[combined_key]['brokers'].append(data['broker'])
+
+        combined_holdings[combined_key]['quantity'] += data['quantity']
+        combined_holdings[combined_key]['total_cost'] += data['total_cost']
+
+    # --- Enrichment and Summary ---
+    total_portfolio_value_usd = 0.0
+    total_unrealized_pnl_usd = 0.0
+    total_today_pnl_usd = 0.0
+    market_data_complete = True
+    market_data_timestamps = []
+
+    for data in combined_holdings.values():
+        data['broker'] = ', '.join(data['brokers'])
 
         # Calculate average cost basis
-        if data['total_shares_bought'] > 0:
-            data['avg_cost_basis'] = data['total_cost'] / data['total_shares_bought']
+        if data['quantity'] > 0:
+            data['avg_cost_basis'] = data['total_cost'] / data['quantity']
         else:
             data['avg_cost_basis'] = 0
 
         # Get current market data
         market_data = get_stock_price(data['symbol'], data['currency'])
+        if not market_data.get('is_valid'):
+            market_data_complete = False
         data['current_price'] = market_data['current_price']
         data['change_today'] = market_data['change_today']
         data['sparkline_data'] = market_data['sparkline_data']
+        data['latest_data_at'] = market_data.get('latest_data_at')
+        if market_data.get('latest_data_sort') is not None:
+            market_data_timestamps.append({
+                'display': market_data['latest_data_at'],
+                'sort': market_data['latest_data_sort']
+            })
 
         # Calculate Today's P&L for this holding
         today_pnl_native = data['quantity'] * data['change_today']
@@ -257,19 +683,14 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
         total_portfolio_value_usd += data['current_value_usd']
         total_unrealized_pnl_usd += data['pnl_usd']
         
-        # Add to total realized pnl
-        realized_pnl_native = data['realized_pnl_native']
-        if data['currency'] == 'JPY' and exchange_rate > 0:
-            total_realized_pnl_usd += realized_pnl_native / exchange_rate
-        else:
-            total_realized_pnl_usd += realized_pnl_native
-
         summary_list.append(data)
 
     total_portfolio_value_jpy = total_portfolio_value_usd * exchange_rate if exchange_rate > 0 else 0
     total_realized_pnl_jpy = total_realized_pnl_usd * exchange_rate if exchange_rate > 0 else 0
     total_unrealized_pnl_jpy = total_unrealized_pnl_usd * exchange_rate if exchange_rate > 0 else 0
     total_today_pnl_jpy = total_today_pnl_usd * exchange_rate if exchange_rate > 0 else 0
+    oldest_market_data = min(market_data_timestamps, key=lambda item: item['sort']) if market_data_timestamps else None
+    latest_market_data = max(market_data_timestamps, key=lambda item: item['sort']) if market_data_timestamps else None
 
     return {
         'stocks': summary_list,
@@ -281,6 +702,9 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
         'total_unrealized_pnl_jpy': total_unrealized_pnl_jpy,
         'total_today_pnl_usd': total_today_pnl_usd,
         'total_today_pnl_jpy': total_today_pnl_jpy,
+        'market_data_complete': market_data_complete,
+        'oldest_market_data_at': oldest_market_data['display'] if oldest_market_data else None,
+        'latest_market_data_at': latest_market_data['display'] if latest_market_data else None,
     }
 
 def _ensure_history_updated(current_summary):
@@ -349,7 +773,17 @@ def index():
     effective_broker_filter = broker_filter if broker_filter != 'all' else None
     effective_currency_filter = currency_filter if currency_filter != 'all' else None
 
-    exchange_rate = get_exchange_rate()
+    exchange_data = get_exchange_rate()
+    market_data_reliable = exchange_data is not None
+    if isinstance(exchange_data, dict):
+        exchange_rate = exchange_data['rate']
+        fx_latest_data_at = exchange_data.get('latest_data_at')
+    else:
+        exchange_rate = exchange_data or 150.0
+        fx_latest_data_at = None
+    if not market_data_reliable:
+        flash('Could not fetch the live USD/JPY rate. Showing temporary values and skipping today\'s history snapshot.', 'warning')
+
     with sqlite3.connect(DATABASE) as conn:
         conn.row_factory = sqlite3.Row
         trades = conn.execute('SELECT * FROM trades ORDER BY trade_date ASC').fetchall()
@@ -361,10 +795,16 @@ def index():
     # If filters are active, we must re-calculate the summary without them for the history.
     if effective_broker_filter or effective_currency_filter:
         total_summary = _calculate_portfolio_summary(trades, exchange_rate)
-        _ensure_history_updated(total_summary)
+        if market_data_reliable and total_summary['market_data_complete']:
+            _ensure_history_updated(total_summary)
+        else:
+            flash('Some live market data could not be fetched. Portfolio history was not updated.', 'warning')
     else:
         # No filters active, so we can use the summary we already have
-        _ensure_history_updated(summary)
+        if market_data_reliable and summary['market_data_complete']:
+            _ensure_history_updated(summary)
+        else:
+            flash('Some live market data could not be fetched. Portfolio history was not updated.', 'warning')
 
     # 4. Get the history data for the chart (now includes today's correct value).
     with sqlite3.connect(DATABASE) as conn:
@@ -380,10 +820,67 @@ def index():
                            **summary, 
                            exchange_rate=exchange_rate, 
                            prices_last_updated=prices_last_updated, 
+                           fx_latest_data_at=fx_latest_data_at,
                            history_data=history_data, 
                            brokers=BROKERS,
                            selected_broker=broker_filter,
                            selected_currency=currency_filter)
+
+@app.route('/health')
+def portfolio_health():
+    """Shows concentration checks, sector exposure, and rebalance ideas."""
+    exchange_data = get_exchange_rate()
+    if isinstance(exchange_data, dict):
+        exchange_rate = exchange_data['rate']
+        fx_latest_data_at = exchange_data.get('latest_data_at')
+    else:
+        exchange_rate = exchange_data or 150.0
+        fx_latest_data_at = None
+    if exchange_data is None:
+        flash('Could not fetch the live USD/JPY rate. Showing temporary health checks with a fallback rate.', 'warning')
+
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        trades = conn.execute('SELECT * FROM trades ORDER BY trade_date ASC').fetchall()
+
+    summary = _calculate_portfolio_summary(trades, exchange_rate)
+    if not summary['market_data_complete']:
+        flash('Some live market data could not be fetched. Health checks may be incomplete.', 'warning')
+
+    settings = get_health_settings()
+    health = _calculate_portfolio_health(summary, settings)
+    prices_last_updated = datetime.now().strftime('%Y-%m-%d %H:%M')
+
+    return render_template(
+        'health.html',
+        **summary,
+        health=health,
+        exchange_rate=exchange_rate,
+        fx_latest_data_at=fx_latest_data_at,
+        prices_last_updated=prices_last_updated
+    )
+
+@app.route('/health/settings', methods=['GET', 'POST'])
+def health_settings():
+    """Lets the user edit portfolio health-check thresholds."""
+    settings = get_health_settings()
+
+    if request.method == 'POST':
+        _validate_csrf_token()
+        settings, errors = _parse_health_settings_form(request.form)
+        if errors:
+            for error in errors:
+                flash(error, 'danger')
+        else:
+            save_health_settings(settings)
+            flash('Health check settings saved.', 'success')
+            return redirect(url_for('portfolio_health'))
+
+    return render_template(
+        'health_settings.html',
+        settings=settings,
+        labels=HEALTH_SETTING_LABELS
+    )
 
 @app.route('/api/portfolio')
 def api_portfolio():
@@ -399,7 +896,11 @@ def api_portfolio():
     effective_broker_filter = broker_filter if broker_filter != 'all' else None
     effective_currency_filter = currency_filter if currency_filter != 'all' else None
 
-    exchange_rate = get_exchange_rate()
+    exchange_data = get_exchange_rate()
+    if exchange_data is None:
+        return jsonify({'error': 'Live USD/JPY exchange rate is unavailable.'}), 503
+    exchange_rate = exchange_data['rate'] if isinstance(exchange_data, dict) else exchange_data
+
     with sqlite3.connect(DATABASE) as conn:
         conn.row_factory = sqlite3.Row
         trades = conn.execute('SELECT * FROM trades ORDER BY trade_date ASC').fetchall()
@@ -484,8 +985,8 @@ def generate_tax_report_data(year):
                 'total_cost_jpy': cost_jpy
             })
 
-        # --- P&L Calculation (for SELLs in the target year) ---
-        elif trade['trade_type'] == 'SELL' and trade_year == year:
+        # --- P&L Calculation (for all SELLs, reported only for the selected year) ---
+        elif trade['trade_type'] == 'SELL':
             current_holding = holdings[symbol]
             avg_cost_jpy = 0
             if current_holding['quantity'] > 0:
@@ -513,21 +1014,22 @@ def generate_tax_report_data(year):
 
             pnl_jpy = proceeds_jpy - cost_of_sale_jpy
 
-            sales_report.append({
-                'symbol': symbol, 'name': trade['name'], 
-                'trade_date': trade['trade_date'], 'quantity': trade['quantity'], 
-                'proceeds_jpy': proceeds_jpy, 'cost_basis_jpy': cost_of_sale_jpy, 
-                'pnl_jpy': pnl_jpy, 'broker': trade['broker'],
-                'selling_fee_jpy': fee_jpy,
-                'last_purchase_date': holdings[symbol]['last_purchase_date'],
-                # --- Additions for breakdown ---
-                'avg_cost_per_share_jpy': avg_cost_jpy,
-                'avg_cost_per_share_native': avg_cost_native,
-                'sale_price_native': trade['price'],
-                'sale_currency': trade['currency'],
-                'sale_fx_rate': trade['fx_rate'],
-                'acquisition_history': list(buy_history[symbol])
-            })
+            if trade_year == year:
+                sales_report.append({
+                    'symbol': symbol, 'name': trade['name'], 
+                    'trade_date': trade['trade_date'], 'quantity': trade['quantity'], 
+                    'proceeds_jpy': proceeds_jpy, 'cost_basis_jpy': cost_of_sale_jpy, 
+                    'pnl_jpy': pnl_jpy, 'broker': trade['broker'],
+                    'selling_fee_jpy': fee_jpy,
+                    'last_purchase_date': holdings[symbol]['last_purchase_date'],
+                    # --- Additions for breakdown ---
+                    'avg_cost_per_share_jpy': avg_cost_jpy,
+                    'avg_cost_per_share_native': avg_cost_native,
+                    'sale_price_native': trade['price'],
+                    'sale_currency': trade['currency'],
+                    'sale_fx_rate': trade['fx_rate'],
+                    'acquisition_history': list(buy_history[symbol])
+                })
 
             # Update holdings after the sale
             holdings[symbol]['quantity'] -= trade['quantity']
@@ -561,6 +1063,7 @@ def tax_report():
 
     report_data = None
     if request.method == 'POST':
+        _validate_csrf_token()
         selected_year = request.form.get('year')
         if selected_year:
             report_data = generate_tax_report_data(int(selected_year))
@@ -572,21 +1075,28 @@ def tax_report():
 def add_trade():
     """Handles adding a new trade."""
     if request.method == 'POST':
+        _validate_csrf_token()
+        values, errors = _parse_trade_form(request.form)
+        if errors:
+            for error in errors:
+                flash(error, 'danger')
+            return render_template('add_trade.html', today=values.get('trade_date') or datetime.utcnow().strftime('%Y-%m-%d'), brokers=BROKERS)
+
         with sqlite3.connect(DATABASE) as conn:
             conn.execute(
                 'INSERT INTO trades (symbol, name, trade_type, quantity, price, currency, trade_date, broker, fx_rate, fee_amount, fee_currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 (
-                    request.form['symbol'],
-                    request.form['name'],
-                    request.form['trade_type'],
-                    float(request.form['quantity']),
-                    float(request.form['price']),
-                    request.form['currency'],
-                    request.form['trade_date'],
-                    request.form['broker'],
-                    float(request.form.get('fx_rate')) if request.form.get('fx_rate') else None,
-                    float(request.form.get('fee_amount')) if request.form.get('fee_amount') else None,
-                    request.form.get('fee_currency') or None
+                    values['symbol'],
+                    values['name'],
+                    values['trade_type'],
+                    values['quantity'],
+                    values['price'],
+                    values['currency'],
+                    values['trade_date'],
+                    values['broker'],
+                    values['fx_rate'],
+                    values['fee_amount'],
+                    values['fee_currency']
                 )
             )
         return redirect(url_for('list_trades'))
@@ -596,21 +1106,33 @@ def add_trade():
 def edit_trade(trade_id):
     """Handles editing an existing trade."""
     if request.method == 'POST':
+        _validate_csrf_token()
+        values, errors = _parse_trade_form(request.form)
+        if errors:
+            for error in errors:
+                flash(error, 'danger')
+            with sqlite3.connect(DATABASE) as conn:
+                conn.row_factory = sqlite3.Row
+                trade = conn.execute('SELECT * FROM trades WHERE id = ?', (trade_id,)).fetchone()
+            if trade is None:
+                abort(404)
+            return render_template('edit_trade.html', trade=trade, brokers=BROKERS)
+
         with sqlite3.connect(DATABASE) as conn:
             conn.execute(
                 'UPDATE trades SET symbol=?, name=?, trade_type=?, quantity=?, price=?, currency=?, trade_date=?, broker=?, fx_rate=?, fee_amount=?, fee_currency=? WHERE id=?',
                 (
-                    request.form['symbol'],
-                    request.form['name'],
-                    request.form['trade_type'],
-                    float(request.form['quantity']),
-                    float(request.form['price']),
-                    request.form['currency'],
-                    request.form['trade_date'],
-                    request.form['broker'],
-                    float(request.form.get('fx_rate')) if request.form.get('fx_rate') else None,
-                    float(request.form.get('fee_amount')) if request.form.get('fee_amount') else None,
-                    request.form.get('fee_currency') or None,
+                    values['symbol'],
+                    values['name'],
+                    values['trade_type'],
+                    values['quantity'],
+                    values['price'],
+                    values['currency'],
+                    values['trade_date'],
+                    values['broker'],
+                    values['fx_rate'],
+                    values['fee_amount'],
+                    values['fee_currency'],
                     trade_id
                 )
             )
@@ -620,13 +1142,17 @@ def edit_trade(trade_id):
     with sqlite3.connect(DATABASE) as conn:
         conn.row_factory = sqlite3.Row
         trade = conn.execute('SELECT * FROM trades WHERE id = ?', (trade_id,)).fetchone()
+    if trade is None:
+        abort(404)
     return render_template('edit_trade.html', trade=trade, brokers=BROKERS)
 
-@app.route('/delete_trade/<int:trade_id>')
+@app.route('/delete_trade/<int:trade_id>', methods=['POST'])
 def delete_trade(trade_id):
     """Deletes a trade from the database."""
+    _validate_csrf_token()
     with sqlite3.connect(DATABASE) as conn:
         conn.execute('DELETE FROM trades WHERE id = ?', (trade_id,))
+    flash('Trade deleted.', 'success')
     return redirect(url_for('list_trades'))
 
 @app.route('/export_trades')
@@ -660,6 +1186,7 @@ def export_trades():
 @app.route('/bulk_upload', methods=['GET', 'POST'])
 def bulk_upload():
     if request.method == 'POST':
+        _validate_csrf_token()
         if 'file' not in request.files:
             flash('No file part in the request.', 'danger')
             return redirect(request.url)

@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}Health Settings{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="mb-0">Health Settings</h1>
+    <a href="{{ url_for('portfolio_health') }}" class="btn btn-outline-secondary">
+        <i class="fas fa-arrow-left me-1"></i> Health
+    </a>
+</div>
+
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0">Thresholds</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('health_settings') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="single_stock_warning_percent" class="form-label">{{ labels.single_stock_warning_percent }}</label>
+                            <input type="number" min="0" max="100" step="0.1" class="form-control" id="single_stock_warning_percent" name="single_stock_warning_percent" value="{{ settings.single_stock_warning_percent }}" required>
+                            <div class="form-text">Starts a warning when one stock reaches this portfolio weight.</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="single_stock_danger_percent" class="form-label">{{ labels.single_stock_danger_percent }}</label>
+                            <input type="number" min="0" max="100" step="0.1" class="form-control" id="single_stock_danger_percent" name="single_stock_danger_percent" value="{{ settings.single_stock_danger_percent }}" required>
+                            <div class="form-text">Marks a stock as very concentrated at this weight.</div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="single_stock_target_percent" class="form-label">{{ labels.single_stock_target_percent }}</label>
+                            <input type="number" min="0" max="100" step="0.1" class="form-control" id="single_stock_target_percent" name="single_stock_target_percent" value="{{ settings.single_stock_target_percent }}" required>
+                            <div class="form-text">Used when estimating how much overweight exposure to offset.</div>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="sector_warning_percent" class="form-label">{{ labels.sector_warning_percent }}</label>
+                            <input type="number" min="0" max="100" step="0.1" class="form-control" id="sector_warning_percent" name="sector_warning_percent" value="{{ settings.sector_warning_percent }}" required>
+                            <div class="form-text">Starts a warning when a sector reaches this portfolio weight.</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="sector_danger_percent" class="form-label">{{ labels.sector_danger_percent }}</label>
+                            <input type="number" min="0" max="100" step="0.1" class="form-control" id="sector_danger_percent" name="sector_danger_percent" value="{{ settings.sector_danger_percent }}" required>
+                            <div class="form-text">Marks a sector as very overweight at this weight.</div>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="min_holdings_count" class="form-label">{{ labels.min_holdings_count }}</label>
+                            <input type="number" min="1" step="1" class="form-control" id="min_holdings_count" name="min_holdings_count" value="{{ settings.min_holdings_count }}" required>
+                            <div class="form-text">Warns when open holdings are below this count.</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="max_rebalance_ideas" class="form-label">{{ labels.max_rebalance_ideas }}</label>
+                            <input type="number" min="1" max="20" step="1" class="form-control" id="max_rebalance_ideas" name="max_rebalance_ideas" value="{{ settings.max_rebalance_ideas }}" required>
+                            <div class="form-text">Limits how many ideas appear on the health page.</div>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">Save Settings</button>
+                    <a href="{{ url_for('portfolio_health') }}" class="btn btn-secondary">Cancel</a>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4 mt-4 mt-lg-0">
+        <div class="card">
+            <div class="card-header">Current Defaults</div>
+            <div class="card-body">
+                <p class="text-muted">These values are stored in the SQLite database under the app's mounted data directory, so they persist across Docker restarts.</p>
+                <p class="mb-0 text-muted">Use stricter thresholds for a concentrated portfolio, or loosen them if your strategy intentionally holds fewer positions.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
