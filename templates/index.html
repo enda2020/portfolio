@@ -136,7 +136,12 @@
                             <td><strong>{{ stock.symbol }}</strong></td>
                             <td><span class="sensitive-data">{{ "%.2f"|format(stock.quantity) }}</span></td>
                             <td><span class="sensitive-data">{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.avg_cost_basis) }}</span></td>
-                            <td><span class="sensitive-data">{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.current_price) }}</span></td>
+                            <td>
+                                <span class="sensitive-data">{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.current_price) }}</span>
+                                {% if stock.quote_session != 'regular' %}
+                                <span class="badge bg-info ms-1">{{ stock.quote_session }}</span>
+                                {% endif %}
+                            </td>
                             <td class="{{ 'text-success' if stock.change_today >= 0 else 'text-danger' }}">
                                 <span class="sensitive-data">
                                     {{- '+' if stock.change_today >= 0 else '' }}{{ "{:,.2f}".format(stock.change_today) }}
@@ -198,7 +203,12 @@
                             <td>{{ stock.name }}</td>
                             <td><span class="sensitive-data">{{ "%.2f"|format(stock.quantity) }}</span></td>
                             <td><span class="sensitive-data">{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.avg_cost_basis) }}</span></td>
-                            <td><span class="sensitive-data">{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.current_price) }}</span></td>
+                            <td>
+                                <span class="sensitive-data">{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.current_price) }}</span>
+                                {% if stock.quote_session != 'regular' %}
+                                <span class="badge bg-info ms-1">{{ stock.quote_session }}</span>
+                                {% endif %}
+                            </td>
                             <td class="{{ 'text-success' if stock.change_today >= 0 else 'text-danger' }}">
                                 <span class="sensitive-data">
                                     {{- '+' if stock.change_today >= 0 else '' }}{{ "{:,.2f}".format(stock.change_today) }}

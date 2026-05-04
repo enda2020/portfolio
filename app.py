@@ -94,7 +94,9 @@ def get_stock_price(symbol, currency):
         'sparkline_data': [],
         'is_valid': False,
         'latest_data_at': None,
-        'latest_data_sort': None
+        'latest_data_sort': None,
+        'quote_session': 'regular',
+        'includes_extended_hours': False
     }
 
     try:
@@ -118,6 +120,18 @@ def get_stock_price(symbol, currency):
             
             # Get the last 14 days for the sparkline
             result['sparkline_data'] = list(history[price_col].tail(14))
+
+            if currency == 'USD':
+                intraday_history = yf.Ticker(api_symbol).history(period="5d", interval="5m", prepost=True)
+                print(f"--- yfinance extended-hours response for {api_symbol} ---")
+                print(intraday_history)
+                if not intraday_history.empty and ('Close' in intraday_history.columns or 'close' in intraday_history.columns):
+                    intraday_price_col = 'Close' if 'Close' in intraday_history.columns else 'close'
+                    result['current_price'] = float(intraday_history[intraday_price_col].iloc[-1])
+                    result['latest_data_at'], result['latest_data_sort'] = _format_market_timestamp(intraday_history.index[-1])
+                    result['includes_extended_hours'] = True
+                    result['quote_session'] = _classify_us_market_session(intraday_history.index[-1])
+                    print(f"--- Using latest US quote for {symbol} from {result['latest_data_at']} ({result['quote_session']}): {result['current_price']} ---")
 
     except Exception as e:
         print(f"Could not fetch price for {symbol}: {e}")
@@ -183,6 +197,28 @@ def _format_market_timestamp(timestamp):
         return display, dt.timestamp()
     except Exception:
         return str(timestamp), str(timestamp)
+
+def _classify_us_market_session(timestamp):
+    """Classifies a yfinance intraday timestamp as regular, pre-market, or post-market."""
+    try:
+        if hasattr(timestamp, 'to_pydatetime'):
+            dt = timestamp.to_pydatetime()
+        elif isinstance(timestamp, datetime):
+            dt = timestamp
+        else:
+            return 'extended hours'
+
+        market_minutes = (dt.hour * 60) + dt.minute
+        regular_start = (9 * 60) + 30
+        regular_end = 16 * 60
+
+        if market_minutes < regular_start:
+            return 'pre-market'
+        if market_minutes >= regular_end:
+            return 'post-market'
+        return 'regular'
+    except Exception:
+        return 'extended hours'
 
 def _calculate_portfolio_health(summary, settings=None):
     """Creates concentration checks and rebalance ideas from the current holdings summary."""
@@ -636,6 +672,8 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
         data['change_today'] = market_data['change_today']
         data['sparkline_data'] = market_data['sparkline_data']
         data['latest_data_at'] = market_data.get('latest_data_at')
+        data['quote_session'] = market_data.get('quote_session', 'regular')
+        data['includes_extended_hours'] = market_data.get('includes_extended_hours', False)
         if market_data.get('latest_data_sort') is not None:
             market_data_timestamps.append({
                 'display': market_data['latest_data_at'],
