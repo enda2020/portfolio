@@ -53,6 +53,25 @@ HEALTH_SETTING_LABELS = {
     'min_holdings_count': 'Minimum Holdings Count',
     'max_rebalance_ideas': 'Maximum Rebalance Ideas',
 }
+YFINANCE_TIMEOUT_SECONDS = float(os.environ.get('YFINANCE_TIMEOUT_SECONDS', '10'))
+
+def _get_yfinance_history(api_symbol, **kwargs):
+    """Fetch yfinance history with a bounded network timeout."""
+    return yf.Ticker(api_symbol).history(timeout=YFINANCE_TIMEOUT_SECONDS, **kwargs)
+
+def _get_yfinance_info(api_symbol):
+    """Fetch yfinance metadata with a bounded timeout when supported."""
+    ticker = yf.Ticker(api_symbol)
+    try:
+        return ticker.get_info(timeout=YFINANCE_TIMEOUT_SECONDS)
+    except TypeError:
+        return ticker.get_info()
+
+def _log_yfinance_history(api_symbol, history, label='history'):
+    if history.empty:
+        print(f"--- yfinance {label} for {api_symbol}: empty response ---")
+        return
+    print(f"--- yfinance {label} for {api_symbol}: {len(history)} rows, latest={history.index[-1]} ---")
 
 @cache.memoize()
 def get_exchange_rate():
@@ -60,9 +79,8 @@ def get_exchange_rate():
     print("--- CACHE MISS: Fetching live USD/JPY exchange rate from yfinance ---")
     try:
         # Use a longer period to be robust against weekends/holidays
-        history = yf.Ticker("JPY=X").history(period="5d")
-        print("--- yfinance response for JPY=X ---")
-        print(history)
+        history = _get_yfinance_history("JPY=X", period="5d")
+        _log_yfinance_history("JPY=X", history)
         if not history.empty and ('Close' in history.columns or 'close' in history.columns):
             # The column name can be 'Close' or 'close'. For the most recent entry,
             # this value represents the "last price", not necessarily a closing price.
@@ -101,9 +119,8 @@ def get_stock_price(symbol, currency):
 
     try:
         # Fetch 15 days of data to get 14 days for sparkline and one previous day for change
-        history = yf.Ticker(api_symbol).history(period="15d")
-        print(f"--- yfinance response for {api_symbol} ---")
-        print(history)
+        history = _get_yfinance_history(api_symbol, period="15d")
+        _log_yfinance_history(api_symbol, history)
         if not history.empty and ('Close' in history.columns or 'close' in history.columns):
             # The column name can be 'Close' or 'close'. For the most recent entry,
             # this value represents the "last price", not necessarily a closing price.
@@ -122,9 +139,8 @@ def get_stock_price(symbol, currency):
             result['sparkline_data'] = list(history[price_col].tail(14))
 
             if currency == 'USD':
-                intraday_history = yf.Ticker(api_symbol).history(period="5d", interval="5m", prepost=True)
-                print(f"--- yfinance extended-hours response for {api_symbol} ---")
-                print(intraday_history)
+                intraday_history = _get_yfinance_history(api_symbol, period="5d", interval="5m", prepost=True)
+                _log_yfinance_history(api_symbol, intraday_history, label='extended-hours history')
                 if not intraday_history.empty and ('Close' in intraday_history.columns or 'close' in intraday_history.columns):
                     intraday_price_col = 'Close' if 'Close' in intraday_history.columns else 'close'
                     result['current_price'] = float(intraday_history[intraday_price_col].iloc[-1])
@@ -153,7 +169,7 @@ def get_stock_profile(symbol, currency):
     }
 
     try:
-        info = yf.Ticker(api_symbol).get_info()
+        info = _get_yfinance_info(api_symbol)
         quote_type = info.get('quoteType')
         sector = info.get('sector')
         industry = info.get('industry')
