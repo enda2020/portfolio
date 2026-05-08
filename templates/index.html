@@ -6,11 +6,11 @@
 <span class="navbar-text d-flex align-items-start">
     <span>
         <small class="text-white-50 d-block">
-            Checked: {{ prices_last_updated }}
-            {% if latest_market_data_at %}
-                | Yahoo quotes: {{ oldest_market_data_at }}{% if oldest_market_data_at != latest_market_data_at %} to {{ latest_market_data_at }}{% endif %}
+            <span title="{{ prices_last_updated }}">Checked: {{ prices_last_updated_ago }}</span>
+            {% if latest_market_data_ago %}
+                | <span title="{{ latest_market_data_at }}">Quotes: {{ latest_market_data_ago }}</span>
             {% endif %}
-            {% if fx_latest_data_at %}| FX: {{ fx_latest_data_at }}{% endif %}
+            {% if fx_latest_data_ago %}| <span title="{{ fx_latest_data_at }}">FX: {{ fx_latest_data_ago }}</span>{% endif %}
         </small>
     </span>
     <a href="{{ url_for('index', refresh='true') }}" class="btn btn-sm btn-outline-light ms-3" title="Force Refresh Prices">
@@ -52,8 +52,8 @@
 
 <div class="row mb-4">
     <div class="col-lg-3 col-md-6 mb-4">
-        <div class="card text-white bg-info">
-            <div class="card-header">Total Portfolio Value (JPY)</div>
+        <div class="card metric-card metric-accent h-100">
+            <div class="card-header">Portfolio Value</div>
             <div class="card-body">
                 <h3 class="card-title">¥<span class="sensitive-data">{{ "{:,.0f}".format(total_value_jpy) }}</span></h3>
                 <p class="card-text text-white-50">≈ $<span class="sensitive-data">{{ "{:,.2f}".format(total_value_usd) }}</span></p>
@@ -61,7 +61,7 @@
         </div>
     </div>
     <div class="col-lg-3 col-md-6 mb-4">
-        <div class="card text-white {% if total_today_pnl_jpy >= 0 %}bg-success{% else %}bg-danger{% endif %}">
+        <div class="card metric-card h-100 {{ 'metric-positive' if total_today_pnl_jpy >= 0 else 'metric-negative' }}">
             <div class="card-header">Today's P&L</div>
             <div class="card-body">
                 <h3 class="card-title"><span class="sensitive-data">{{- '+' if total_today_pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(total_today_pnl_jpy) }}</span></h3>
@@ -70,8 +70,8 @@
         </div>
     </div>
     <div class="col-lg-3 col-md-6 mb-4">
-        <div class="card {{ 'text-white bg-success' if total_unrealized_pnl_jpy >= 0 else 'text-white bg-danger' }}">
-            <div class="card-header">Unrealized P&L (JPY)</div>
+        <div class="card metric-card h-100 {{ 'metric-positive' if total_unrealized_pnl_jpy >= 0 else 'metric-negative' }}">
+            <div class="card-header">Unrealized</div>
             <div class="card-body">
                 <h3 class="card-title"><span class="sensitive-data">{{- '+' if total_unrealized_pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(total_unrealized_pnl_jpy) }}</span></h3>
                 <p class="card-text text-white-50">≈ <span class="sensitive-data">{{ '+' if total_unrealized_pnl_usd >= 0 else '' }}${{ "{:,.2f}".format(total_unrealized_pnl_usd) }}</span></p>
@@ -79,8 +79,8 @@
         </div>
     </div>
     <div class="col-lg-3 col-md-6 mb-4">
-        <div class="card {{ 'text-white bg-success' if total_realized_pnl_jpy >= 0 else 'text-white bg-danger' }}">
-            <div class="card-header">Total Realized P&L (JPY)</div>
+        <div class="card metric-card h-100 {{ 'metric-positive' if total_realized_pnl_jpy >= 0 else 'metric-negative' }}">
+            <div class="card-header">Realized</div>
             <div class="card-body">
                 <h3 class="card-title"><span class="sensitive-data">{{- '+' if total_realized_pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(total_realized_pnl_jpy) }}</span></h3>
                 <p class="card-text text-white-50">≈ <span class="sensitive-data">{{ '+' if total_realized_pnl_usd >= 0 else '' }}${{ "{:,.2f}".format(total_realized_pnl_usd) }}</span></p>
@@ -126,6 +126,8 @@
                             <th scope="col">Quantity</th>
                             <th scope="col">Avg. Cost</th>
                             <th scope="col">Current Price</th>
+                            <th scope="col">Value</th>
+                            <th scope="col">Total P&L</th>
                             <th scope="col">Today</th>
                             <th scope="col">Today's P&L</th>
                         </tr>
@@ -142,6 +144,10 @@
                                 <span class="badge bg-info ms-1">{{ stock.quote_session }}</span>
                                 {% endif %}
                             </td>
+                            <td><span class="sensitive-data">Â¥{{ "{:,.0f}".format(stock.current_value_jpy) }}</span></td>
+                            <td class="{{ 'text-success' if stock.pnl_jpy >= 0 else 'text-danger' }}">
+                                <span class="sensitive-data">{{- '+' if stock.pnl_jpy >= 0 else '' }}Â¥{{ "{:,.0f}".format(stock.pnl_jpy) }}</span>
+                            </td>
                             <td class="{{ 'text-success' if stock.change_today >= 0 else 'text-danger' }}">
                                 <span class="sensitive-data">
                                     {{- '+' if stock.change_today >= 0 else '' }}{{ "{:,.2f}".format(stock.change_today) }}
@@ -155,7 +161,7 @@
                     </tbody>
                     <tfoot>
                         <tr class="table-active">
-                            <td colspan="5" class="text-end"><strong>Total Today's P&L:</strong></td>
+                            <td colspan="7" class="text-end"><strong>Total Today's P&L:</strong></td>
                             <td class="sensitive-data {{ 'text-success' if total_today_pnl_jpy > 0 else 'text-danger' if total_today_pnl_jpy < 0 else '' }}">
                                 <strong>{{- '+' if total_today_pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(total_today_pnl_jpy) }}</strong>
                             </td>
@@ -250,6 +256,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const stocks = {{ stocks|tojson }};
     let historyData = {{ history_data|tojson }};
     let pieChart = null; // To hold the chart instance
+    const chartLegendPosition = window.innerWidth < 768 ? 'bottom' : 'right';
 
     // --- Form auto-submission ---
     const brokerFilter = document.getElementById('brokerFilter');
@@ -277,8 +284,8 @@ document.addEventListener('DOMContentLoaded', function () {
                 label: 'Value (JPY)',
                 data: data,
                 backgroundColor: [
-                    '#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b',
-                    '#858796', '#5a5c69', '#f8f9fc', '#e83e8c', '#6f42c1'
+                    '#3dd6c6', '#7aa7ff', '#50d890', '#f7c948', '#ff6b7a',
+                    '#b48cff', '#38bdf8', '#f59e0b', '#f472b6', '#94a3b8'
                 ],
                 hoverOffset: 4
             }]
@@ -292,7 +299,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 maintainAspectRatio: false,
                 plugins: {
                     legend: {
-                        position: 'right',
+                        position: chartLegendPosition,
                     }
                 }
             }
@@ -363,8 +370,8 @@ document.addEventListener('DOMContentLoaded', function () {
             datasets: [{
                 label: 'Portfolio Value (JPY)',
                 data: data,
-                borderColor: '#4e73df',
-                backgroundColor: 'rgba(78, 115, 223, 0.1)',
+                borderColor: '#3dd6c6',
+                backgroundColor: 'rgba(61, 214, 198, 0.12)',
                 fill: true,
                 tension: 0.1
             }]

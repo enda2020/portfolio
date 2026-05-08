@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}Trade History{% endblock %}
+{% block title %}Stock / ETF Trade History{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h1>Trade History</h1>
-    <div>
+<div class="page-toolbar d-flex justify-content-between align-items-center mb-4">
+    <h1>Stock / ETF Trade History</h1>
+    <div class="page-actions">
         <a href="{{ url_for('export_trades') }}" class="btn btn-secondary">Export All (CSV)</a>
-        <a href="{{ url_for('add_trade') }}" class="btn btn-primary ms-2">Add New Trade</a>
+        <a href="{{ url_for('add_trade') }}" class="btn btn-primary ms-2">Add Stock / ETF Trade</a>
     </div>
 </div>
 
@@ -37,11 +37,11 @@
                             <td>{{ trade.trade_type }}</td>
                             <td>{{ trade.broker }}</td>
                             <td><span class="sensitive-data">{{ trade.quantity }}</span></td>
-                            <td><span class="sensitive-data">{{ '¥' if trade.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(trade.price) }}</span></td>
+                            <td><span class="sensitive-data">{{ 'JPY ' if trade.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(trade.price) }}</span></td>
                             <td><span class="sensitive-data">{{ "%.4f"|format(trade.fx_rate) if trade.fx_rate is not none else 'N/A' }}</span></td>
                             <td>
                                 {% if trade.fee_amount is not none and trade.fee_amount > 0 %}
-                                    <span class="sensitive-data">{{ '¥' if trade.fee_currency == 'JPY' else '$' }}{{ "{:,.2f}".format(trade.fee_amount) }}</span>
+                                    <span class="sensitive-data">{{ 'JPY ' if trade.fee_currency == 'JPY' else '$' }}{{ "{:,.2f}".format(trade.fee_amount) }}</span>
                                 {% else %}
                                     N/A
                                 {% endif %}
@@ -60,8 +60,8 @@
             </div>
         {% else %}
             <div class="text-center p-5">
-                <h4>No trades recorded.</h4>
-                <p>Add your first trade to build your portfolio history.</p>
+                <h4>No stock / ETF trades recorded.</h4>
+                <p>Add your first stock or ETF trade to build your portfolio history.</p>
             </div>
         {% endif %}
     </div>

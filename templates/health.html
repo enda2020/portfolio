@@ -6,20 +6,20 @@
 <span class="navbar-text d-flex align-items-start">
     <span>
         <small class="text-white-50 d-block">
-            Checked: {{ prices_last_updated }}
-            {% if latest_market_data_at %}
-                | Yahoo quotes: {{ oldest_market_data_at }}{% if oldest_market_data_at != latest_market_data_at %} to {{ latest_market_data_at }}{% endif %}
+            <span title="{{ prices_last_updated }}">Checked: {{ prices_last_updated_ago }}</span>
+            {% if latest_market_data_ago %}
+                | <span title="{{ latest_market_data_at }}">Quotes: {{ latest_market_data_ago }}</span>
             {% endif %}
-            {% if fx_latest_data_at %}| FX: {{ fx_latest_data_at }}{% endif %}
+            {% if fx_latest_data_ago %}| <span title="{{ fx_latest_data_at }}">FX: {{ fx_latest_data_ago }}</span>{% endif %}
         </small>
     </span>
 </span>
 {% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
+<div class="page-toolbar d-flex justify-content-between align-items-center mb-4">
     <h1 class="mb-0">Portfolio Health</h1>
-    <div>
+    <div class="page-actions">
         <a href="{{ url_for('health_settings') }}" class="btn btn-outline-info me-2">
             <i class="fas fa-sliders me-1"></i> Settings
         </a>
@@ -215,6 +215,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const sectors = {{ health.sectors|tojson }};
     const canvas = document.getElementById('sectorChart');
     if (!canvas || !sectors || sectors.length === 0) return;
+    const chartLegendPosition = window.innerWidth < 768 ? 'bottom' : 'right';
 
     new Chart(canvas, {
         type: 'doughnut',
@@ -223,8 +224,8 @@ document.addEventListener('DOMContentLoaded', function () {
             datasets: [{
                 data: sectors.map(s => s.value_jpy),
                 backgroundColor: [
-                    '#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b',
-                    '#858796', '#20c997', '#fd7e14', '#e83e8c', '#6f42c1'
+                    '#3dd6c6', '#7aa7ff', '#50d890', '#f7c948', '#ff6b7a',
+                    '#b48cff', '#38bdf8', '#f59e0b', '#f472b6', '#94a3b8'
                 ],
                 hoverOffset: 4
             }]
@@ -234,7 +235,7 @@ document.addEventListener('DOMContentLoaded', function () {
             maintainAspectRatio: false,
             plugins: {
                 legend: {
-                    position: 'right'
+                    position: chartLegendPosition
                 }
             }
         }

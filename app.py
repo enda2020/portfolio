@@ -3,14 +3,21 @@ import sqlite3
 import yfinance as yf
 from datetime import datetime, timedelta
 import csv
+import html
 import io
 import os
+import re
 import secrets
+import urllib.request
 from flask_caching import Cache
 from dotenv import load_dotenv
 
 # Load environment variables from .env file, making them available to os.environ
 load_dotenv()
+
+for proxy_var in ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']:
+    if os.environ.get(proxy_var) == 'http://127.0.0.1:9':
+        os.environ.pop(proxy_var, None)
 
 app = Flask(__name__)
 # Load the secret key from an environment variable for production.
@@ -34,7 +41,23 @@ cache = Cache(app)
 # Define paths relative to the application's location to ensure they are always correct
 DATA_DIR = os.path.join(basedir, 'data')
 DATABASE = os.path.join(DATA_DIR, 'holdings.db')
+VERSION_FILE = os.path.join(basedir, 'VERSION')
+DEFAULT_LATEST_VERSION_URL = 'https://raw.githubusercontent.com/enda2020/portfolio/main/VERSION'
+APP_VERSION = os.environ.get('APP_VERSION')
+if not APP_VERSION:
+    try:
+        with open(VERSION_FILE, encoding='utf-8') as version_file:
+            APP_VERSION = version_file.read().strip()
+    except OSError:
+        APP_VERSION = '0.0.0'
+LATEST_VERSION_URL = os.environ.get('APP_LATEST_VERSION_URL', DEFAULT_LATEST_VERSION_URL).strip()
 BROKERS = ['Monex', 'Interactive Brokers']
+ACCOUNT_TYPES = ['Specified', 'General', 'NISA', 'Taxable']
+TRADE_DETAILS = ['Standard', 'Reinvestment']
+MUTUAL_FUND_PRICE_UNITS = 10000
+YAHOO_JP_FUND_CODE_ALIASES = {
+    'JP90C000H1T1': '0331418A',
+}
 HEALTH_SETTING_DEFAULTS = {
     'single_stock_warning_percent': 25.0,
     'single_stock_danger_percent': 35.0,
@@ -54,6 +77,7 @@ HEALTH_SETTING_LABELS = {
     'max_rebalance_ideas': 'Maximum Rebalance Ideas',
 }
 YFINANCE_TIMEOUT_SECONDS = float(os.environ.get('YFINANCE_TIMEOUT_SECONDS', '10'))
+YAHOO_JP_TIMEOUT_SECONDS = float(os.environ.get('YAHOO_JP_TIMEOUT_SECONDS', '10'))
 
 def _get_yfinance_history(api_symbol, **kwargs):
     """Fetch yfinance history with a bounded network timeout."""
@@ -73,6 +97,120 @@ def _log_yfinance_history(api_symbol, history, label='history'):
         return
     print(f"--- yfinance {label} for {api_symbol}: {len(history)} rows, latest={history.index[-1]} ---")
 
+def _empty_market_data():
+    return {
+        'current_price': 0.0,
+        'change_today': 0.0,
+        'sparkline_data': [],
+        'is_valid': False,
+        'latest_data_at': None,
+        'latest_data_sort': None,
+        'quote_session': 'regular',
+        'includes_extended_hours': False
+    }
+
+def _resolve_yahoo_jp_fund_code(symbol):
+    normalized_symbol = (symbol or '').strip().upper()
+    return YAHOO_JP_FUND_CODE_ALIASES.get(normalized_symbol, normalized_symbol)
+
+def _format_yahoo_jp_quote_date(mm_dd_value):
+    try:
+        month, day = [int(part) for part in mm_dd_value.split('/')]
+        today = datetime.now()
+        quote_date = datetime(today.year, month, day)
+        if quote_date.date() > today.date() + timedelta(days=30):
+            quote_date = quote_date.replace(year=today.year - 1)
+        return quote_date.strftime('%Y-%m-%d'), quote_date.timestamp()
+    except Exception:
+        return mm_dd_value, mm_dd_value
+
+def _html_to_text(raw_html):
+    without_scripts = re.sub(r'<(script|style)\b[^>]*>.*?</\1>', ' ', raw_html, flags=re.IGNORECASE | re.DOTALL)
+    without_tags = re.sub(r'<[^>]+>', ' ', without_scripts)
+    return re.sub(r'\s+', ' ', html.unescape(without_tags)).strip()
+
+def _version_tuple(version):
+    parts = re.findall(r'\d+', version or '')
+    return tuple(int(part) for part in parts[:3])
+
+@cache.memoize(timeout=3600)
+def get_app_version_status():
+    status = {
+        'current': APP_VERSION,
+        'latest': None,
+        'is_outdated': False,
+        'check_available': bool(LATEST_VERSION_URL),
+        'error': None,
+    }
+
+    if not LATEST_VERSION_URL:
+        return status
+
+    try:
+        request_obj = urllib.request.Request(
+            LATEST_VERSION_URL,
+            headers={'User-Agent': f'portfolio-tracker/{APP_VERSION}'}
+        )
+        with urllib.request.urlopen(request_obj, timeout=3) as response:
+            latest = response.read().decode('utf-8', errors='replace').strip()
+
+        if latest:
+            status['latest'] = latest
+            status['is_outdated'] = _version_tuple(latest) > _version_tuple(APP_VERSION)
+    except Exception as e:
+        status['error'] = str(e)
+
+    return status
+
+@cache.memoize(timeout=21600)
+def get_yahoo_jp_mutual_fund_price(symbol):
+    """Fetches the latest Japanese mutual fund NAV from Yahoo Finance Japan."""
+    fund_code = _resolve_yahoo_jp_fund_code(symbol)
+    url = f"https://finance.yahoo.co.jp/quote/{fund_code}"
+    print(f"--- CACHE MISS: Fetching Yahoo JP mutual fund data for {symbol} (fund code: {fund_code}) ---")
+
+    result = _empty_market_data()
+    try:
+        request_obj = urllib.request.Request(
+            url,
+            headers={
+                'User-Agent': 'Mozilla/5.0',
+                'Accept-Language': 'ja,en;q=0.9',
+            }
+        )
+        with urllib.request.urlopen(request_obj, timeout=YAHOO_JP_TIMEOUT_SECONDS) as response:
+            page_text = _html_to_text(response.read().decode('utf-8', errors='replace'))
+
+        previous_day_label = r'\u524d\u65e5\u6bd4'
+        quote_pattern = re.compile(
+            rf'{re.escape(fund_code)}\s+([0-9,]+)\s+{previous_day_label}\s+([-+]?[0-9,]+)\s*\(\s*([-+]?\s*[0-9.]+)\s*%\s*\)\s+(\d{{2}}/\d{{2}})'
+        )
+        quote_match = quote_pattern.search(page_text)
+        if not quote_match:
+            quote_match = re.search(
+                rf'\u6295\u8cc7\u4fe1\u8a17.*?([0-9,]+)\s+{previous_day_label}\s+([-+]?[0-9,]+)\s*\(\s*([-+]?\s*[0-9.]+)\s*%\s*\)\s+(\d{{2}}/\d{{2}})',
+                page_text
+            )
+
+        if quote_match:
+            nav, change, _change_percent, mm_dd = quote_match.groups()
+            latest_data_at, latest_data_sort = _format_yahoo_jp_quote_date(mm_dd)
+            result.update({
+                'current_price': float(nav.replace(',', '')),
+                'change_today': float(change.replace(',', '')),
+                'is_valid': True,
+                'latest_data_at': latest_data_at,
+                'latest_data_sort': latest_data_sort,
+                'quote_session': 'daily NAV'
+            })
+            print(f"--- Using Yahoo JP NAV for {symbol} from {latest_data_at}: {result['current_price']} ---")
+        else:
+            print(f"Could not parse Yahoo JP mutual fund quote for {symbol}.")
+    except Exception as e:
+        print(f"Could not fetch Yahoo JP mutual fund quote for {symbol}: {e}")
+
+    return result
+
 @cache.memoize()
 def get_exchange_rate():
     """Fetches the current USD/JPY exchange rate."""
@@ -86,11 +224,12 @@ def get_exchange_rate():
             # this value represents the "last price", not necessarily a closing price.
             price_col = 'Close' if 'Close' in history.columns else 'close'
             last_price = float(history[price_col].iloc[-1])
-            latest_data_at, _ = _format_market_timestamp(history.index[-1])
+            latest_data_at, latest_data_sort = _format_market_timestamp(history.index[-1])
             print(f"--- Using last available price for JPY=X from {latest_data_at}: {last_price} ---")
             return {
                 'rate': last_price,
-                'latest_data_at': latest_data_at
+                'latest_data_at': latest_data_at,
+                'latest_data_sort': latest_data_sort
             }
     except Exception as e:
         print(f"Could not fetch exchange rate: {e}.")
@@ -106,16 +245,7 @@ def get_stock_price(symbol, currency):
     
     print(f"--- CACHE MISS: Fetching live market data for {symbol} (API symbol: {api_symbol}) from yfinance ---")
 
-    result = {
-        'current_price': 0.0,
-        'change_today': 0.0,
-        'sparkline_data': [],
-        'is_valid': False,
-        'latest_data_at': None,
-        'latest_data_sort': None,
-        'quote_session': 'regular',
-        'includes_extended_hours': False
-    }
+    result = _empty_market_data()
 
     try:
         # Fetch 15 days of data to get 14 days for sparkline and one previous day for change
@@ -154,6 +284,11 @@ def get_stock_price(symbol, currency):
     
     return result
 
+def get_market_price(symbol, currency, instrument_type='stock'):
+    if instrument_type == 'mutual_fund':
+        return get_yahoo_jp_mutual_fund_price(symbol)
+    return get_stock_price(symbol, currency)
+
 @cache.memoize(timeout=86400)
 def get_stock_profile(symbol, currency):
     """Fetches slower-changing stock metadata used by portfolio health checks."""
@@ -190,8 +325,41 @@ def get_stock_profile(symbol, currency):
 
     return result
 
+def get_instrument_profile(symbol, currency, instrument_type='stock'):
+    if instrument_type == 'mutual_fund':
+        return {
+            'sector': 'Fund / ETF',
+            'industry': 'Mutual Fund',
+            'quote_type': 'MUTUALFUND',
+            'is_valid': True
+        }
+    return get_stock_profile(symbol, currency)
+
 def _percent(value, total):
     return (value / total) * 100 if total else 0
+
+def _format_relative_time(timestamp_value):
+    if timestamp_value is None:
+        return None
+
+    try:
+        elapsed_seconds = max(0, datetime.now().timestamp() - float(timestamp_value))
+    except (TypeError, ValueError):
+        return str(timestamp_value)
+
+    if elapsed_seconds < 60:
+        return 'just now'
+
+    elapsed_minutes = int(elapsed_seconds // 60)
+    if elapsed_minutes < 60:
+        return f"{elapsed_minutes} min ago"
+
+    elapsed_hours = int(elapsed_minutes // 60)
+    if elapsed_hours < 24:
+        return f"{elapsed_hours} hour{'s' if elapsed_hours != 1 else ''} ago"
+
+    elapsed_days = int(elapsed_hours // 24)
+    return f"{elapsed_days} day{'s' if elapsed_days != 1 else ''} ago"
 
 def _format_market_timestamp(timestamp):
     """Returns display and sortable forms for the latest timestamp from yfinance."""
@@ -247,7 +415,7 @@ def _calculate_portfolio_health(summary, settings=None):
     score = 100
 
     for stock in stocks:
-        profile = get_stock_profile(stock['symbol'], stock['currency'])
+        profile = get_instrument_profile(stock['symbol'], stock['currency'], stock.get('instrument_type', 'stock'))
         stock['sector'] = profile['sector']
         stock['industry'] = profile['industry']
         stock['weight_percent'] = _percent(stock['current_value_jpy'], total_value)
@@ -388,7 +556,10 @@ def inject_csrf_token():
     """Makes a per-session CSRF token available to all templates."""
     if 'csrf_token' not in session:
         session['csrf_token'] = secrets.token_urlsafe(32)
-    return {'csrf_token': session['csrf_token']}
+    return {
+        'csrf_token': session['csrf_token'],
+        'app_version': get_app_version_status()
+    }
 
 def _validate_csrf_token():
     token = session.get('csrf_token')
@@ -398,6 +569,63 @@ def _validate_csrf_token():
 def _parse_optional_float(value):
     value = (value or '').strip()
     return float(value) if value else None
+
+def _row_get(row, key, default=None):
+    if row is None:
+        return default
+    if isinstance(row, dict):
+        return row.get(key, default)
+    try:
+        if key in row.keys():
+            return row[key]
+    except AttributeError:
+        pass
+    return default
+
+def _price_unit_factor(instrument_type):
+    return MUTUAL_FUND_PRICE_UNITS if instrument_type == 'mutual_fund' else 1
+
+def _trade_gross_value(trade, price=None):
+    instrument_type = _row_get(trade, 'instrument_type', 'stock')
+    quantity = _row_get(trade, 'quantity', 0) or 0
+    trade_price = _row_get(trade, 'price', 0) if price is None else price
+    return (quantity * (trade_price or 0)) / _price_unit_factor(instrument_type)
+
+def _display_price_basis(value, instrument_type):
+    return value * _price_unit_factor(instrument_type)
+
+def _normalize_stock_trade(trade):
+    normalized = dict(trade)
+    normalized['instrument_type'] = 'stock'
+    return normalized
+
+def _normalize_mutual_fund_trade(trade):
+    return {
+        'id': trade['id'],
+        'symbol': trade['fund_code'],
+        'name': trade['fund_name'],
+        'instrument_type': 'mutual_fund',
+        'trade_type': trade['transaction_type'],
+        'quantity': trade['executed_units'],
+        'price': trade['nav_per_10000'],
+        'currency': trade['currency'],
+        'trade_date': trade['trade_date'],
+        'broker': trade['broker'],
+        'fx_rate': trade['fx_rate'],
+        'fee_amount': 0,
+        'fee_currency': None,
+    }
+
+def _fetch_normalized_trades(order='ASC'):
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        stock_trades = conn.execute(f'SELECT * FROM trades ORDER BY trade_date {order}').fetchall()
+        fund_trades = conn.execute(f'SELECT * FROM mutual_fund_trades ORDER BY trade_date {order}').fetchall()
+
+    normalized = [_normalize_stock_trade(trade) for trade in stock_trades]
+    normalized.extend(_normalize_mutual_fund_trade(trade) for trade in fund_trades)
+    reverse = order.upper() == 'DESC'
+    return sorted(normalized, key=lambda trade: trade['trade_date'], reverse=reverse)
 
 def _parse_trade_form(form):
     """Validates trade form input and returns normalized values plus errors."""
@@ -462,6 +690,79 @@ def _parse_trade_form(form):
         datetime.strptime(values['trade_date'], '%Y-%m-%d')
     except ValueError:
         errors.append("Trade date must be in YYYY-MM-DD format.")
+
+    return values, errors
+
+def _parse_mutual_fund_trade_form(form):
+    errors = []
+    values = {
+        'fund_code': form.get('fund_code', '').strip().upper(),
+        'fund_name': form.get('fund_name', '').strip(),
+        'transaction_type': form.get('transaction_type', '').strip().upper(),
+        'transaction_detail': form.get('transaction_detail', '').strip() or None,
+        'account_type': form.get('account_type', '').strip() or None,
+        'currency': form.get('currency', 'JPY').strip().upper(),
+        'executed_units': None,
+        'nav_per_10000': None,
+        'trade_date': form.get('trade_date', '').strip(),
+        'settlement_date': form.get('settlement_date', '').strip() or None,
+        'settlement_amount': None,
+        'broker': form.get('broker', '').strip(),
+        'fx_rate': None,
+    }
+
+    required_fields = ['fund_code', 'fund_name', 'transaction_type', 'currency', 'trade_date', 'broker']
+    for field in required_fields:
+        if not values[field]:
+            errors.append(f"{field.replace('_', ' ').title()} is required.")
+
+    if values['transaction_type'] and values['transaction_type'] not in ['BUY', 'SELL']:
+        errors.append("Transaction type must be BUY or SELL.")
+    if values['transaction_detail'] and values['transaction_detail'] not in TRADE_DETAILS:
+        errors.append("Transaction detail is not recognized.")
+    if values['account_type'] and values['account_type'] not in ACCOUNT_TYPES:
+        errors.append("Account type is not recognized.")
+    if values['currency'] != 'JPY':
+        errors.append("Japanese mutual fund trades must use JPY currency.")
+    if values['broker'] and values['broker'] not in BROKERS:
+        errors.append("Broker is not recognized.")
+
+    try:
+        values['executed_units'] = float(form.get('executed_units', ''))
+        if values['executed_units'] <= 0:
+            errors.append("Executed units must be positive.")
+    except (TypeError, ValueError):
+        errors.append("Executed units must be a valid number.")
+
+    try:
+        values['nav_per_10000'] = float(form.get('nav_per_10000', ''))
+        if values['nav_per_10000'] < 0:
+            errors.append("NAV cannot be negative.")
+    except (TypeError, ValueError):
+        errors.append("NAV must be a valid number.")
+
+    try:
+        values['settlement_amount'] = _parse_optional_float(form.get('settlement_amount'))
+    except ValueError:
+        errors.append("Settlement amount must be a valid number.")
+
+    try:
+        values['fx_rate'] = _parse_optional_float(form.get('fx_rate'))
+        if values['fx_rate'] is not None and values['fx_rate'] <= 0:
+            errors.append("FX rate must be positive.")
+    except ValueError:
+        errors.append("FX rate must be a valid number.")
+
+    try:
+        datetime.strptime(values['trade_date'], '%Y-%m-%d')
+    except ValueError:
+        errors.append("Trade date must be in YYYY-MM-DD format.")
+
+    if values['settlement_date']:
+        try:
+            datetime.strptime(values['settlement_date'], '%Y-%m-%d')
+        except ValueError:
+            errors.append("Settlement date must be in YYYY-MM-DD format.")
 
     return values, errors
 
@@ -554,6 +855,24 @@ def init_db():
             )
         ''')
         conn.execute('''
+            CREATE TABLE IF NOT EXISTS mutual_fund_trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fund_code TEXT NOT NULL,
+                fund_name TEXT NOT NULL,
+                transaction_type TEXT NOT NULL, -- 'BUY' or 'SELL'
+                transaction_detail TEXT,
+                account_type TEXT,
+                currency TEXT NOT NULL DEFAULT 'JPY',
+                executed_units REAL NOT NULL,
+                nav_per_10000 REAL NOT NULL,
+                trade_date TEXT NOT NULL,
+                settlement_date TEXT,
+                settlement_amount REAL,
+                broker TEXT,
+                fx_rate REAL
+            )
+        ''')
+        conn.execute('''
             CREATE TABLE IF NOT EXISTS portfolio_history (
                 date TEXT PRIMARY KEY,
                 value_usd REAL NOT NULL,
@@ -584,11 +903,13 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
     holdings = {}
     for trade in trades:
         # Aggregate by both symbol and broker for more granular tracking
-        key = (trade['symbol'], trade['broker'])
+        instrument_type = trade['instrument_type'] if 'instrument_type' in trade.keys() else 'stock'
+        key = (trade['symbol'], trade['broker'], instrument_type)
         if key not in holdings:
             holdings[key] = {
                 'symbol': trade['symbol'],
                 'broker': trade['broker'],
+                'instrument_type': instrument_type,
                 'name': trade['name'],
                 'currency': trade['currency'],
                 'quantity': 0,
@@ -610,14 +931,14 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
 
         if trade['trade_type'] == 'BUY':
             holdings[key]['quantity'] += trade['quantity']
-            holdings[key]['total_cost'] += (trade['quantity'] * trade['price']) + fee_in_native_currency
+            holdings[key]['total_cost'] += _trade_gross_value(trade) + fee_in_native_currency
         elif trade['trade_type'] == 'SELL':
-            avg_cost_basis = 0
+            avg_unit_cost_basis = 0
             if holdings[key]['quantity'] > 0:
-                avg_cost_basis = holdings[key]['total_cost'] / holdings[key]['quantity']
+                avg_unit_cost_basis = holdings[key]['total_cost'] / holdings[key]['quantity']
             
-            cost_of_shares_sold = trade['quantity'] * avg_cost_basis
-            proceeds = (trade['quantity'] * trade['price']) - fee_in_native_currency
+            cost_of_shares_sold = trade['quantity'] * avg_unit_cost_basis
+            proceeds = _trade_gross_value(trade) - fee_in_native_currency
             
             holdings[key]['realized_pnl_native'] += proceeds - cost_of_shares_sold
             holdings[key]['quantity'] -= trade['quantity']
@@ -647,12 +968,13 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
         if data['quantity'] <= 0.00001: # Use a small epsilon for float comparison
             continue # Skip display and market-data lookup for fully sold-off stocks
 
-        combined_key = (data['symbol'], data['currency'])
+        combined_key = (data['symbol'], data['currency'], data['instrument_type'])
         if combined_key not in combined_holdings:
             combined_holdings[combined_key] = {
                 'symbol': data['symbol'],
                 'broker': data['broker'],
                 'brokers': [data['broker']],
+                'instrument_type': data['instrument_type'],
                 'name': data['name'],
                 'currency': data['currency'],
                 'quantity': 0,
@@ -676,14 +998,22 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
 
         # Calculate average cost basis
         if data['quantity'] > 0:
-            data['avg_cost_basis'] = data['total_cost'] / data['quantity']
+            data['avg_unit_cost_basis'] = data['total_cost'] / data['quantity']
+            data['avg_cost_basis'] = _display_price_basis(data['avg_unit_cost_basis'], data['instrument_type'])
         else:
+            data['avg_unit_cost_basis'] = 0
             data['avg_cost_basis'] = 0
 
         # Get current market data
-        market_data = get_stock_price(data['symbol'], data['currency'])
+        market_data = get_market_price(data['symbol'], data['currency'], data['instrument_type'])
         if not market_data.get('is_valid'):
             market_data_complete = False
+            market_data = {
+                **market_data,
+                'current_price': data['avg_cost_basis'],
+                'change_today': 0.0,
+                'quote_session': 'cost basis fallback'
+            }
         data['current_price'] = market_data['current_price']
         data['change_today'] = market_data['change_today']
         data['sparkline_data'] = market_data['sparkline_data']
@@ -697,7 +1027,7 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
             })
 
         # Calculate Today's P&L for this holding
-        today_pnl_native = data['quantity'] * data['change_today']
+        today_pnl_native = (data['quantity'] * data['change_today']) / _price_unit_factor(data['instrument_type'])
         data['today_pnl_native'] = today_pnl_native
 
         # Calculate % change for today
@@ -707,10 +1037,10 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
         else:
             data['change_today_percent'] = 0.0
 
-        current_value_native = data['quantity'] * data['current_price']
+        current_value_native = (data['quantity'] * data['current_price']) / _price_unit_factor(data['instrument_type'])
         
         # Calculate P&L
-        cost_of_holding = data['quantity'] * data['avg_cost_basis']
+        cost_of_holding = data['quantity'] * data['avg_unit_cost_basis']
         data['pnl_native'] = current_value_native - cost_of_holding
 
         # Convert Today's P&L to USD and add to total
@@ -759,6 +1089,8 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
         'market_data_complete': market_data_complete,
         'oldest_market_data_at': oldest_market_data['display'] if oldest_market_data else None,
         'latest_market_data_at': latest_market_data['display'] if latest_market_data else None,
+        'oldest_market_data_ago': _format_relative_time(oldest_market_data['sort']) if oldest_market_data else None,
+        'latest_market_data_ago': _format_relative_time(latest_market_data['sort']) if latest_market_data else None,
     }
 
 def _ensure_history_updated(current_summary):
@@ -832,18 +1164,18 @@ def index():
     if isinstance(exchange_data, dict):
         exchange_rate = exchange_data['rate']
         fx_latest_data_at = exchange_data.get('latest_data_at')
+        fx_latest_data_ago = _format_relative_time(exchange_data.get('latest_data_sort'))
     else:
         exchange_rate = exchange_data or 150.0
         fx_latest_data_at = None
-    if not market_data_reliable:
-        flash('Could not fetch the live USD/JPY rate. Showing temporary values and skipping today\'s history snapshot.', 'warning')
-
-    with sqlite3.connect(DATABASE) as conn:
-        conn.row_factory = sqlite3.Row
-        trades = conn.execute('SELECT * FROM trades ORDER BY trade_date ASC').fetchall()
+        fx_latest_data_ago = None
+    trades = _fetch_normalized_trades()
 
     # 2. Perform the main calculation with filters for display. This is the single source of truth.
     summary = _calculate_portfolio_summary(trades, exchange_rate, effective_broker_filter, effective_currency_filter)
+    has_live_data_issue = (not market_data_reliable) or (not summary['market_data_complete'])
+    if has_live_data_issue:
+        flash('Live market data is temporarily unavailable. Showing cost-basis fallback values and skipping today\'s history snapshot.', 'info')
 
     # 3. Ensure history is up-to-date with the TOTAL portfolio value.
     # If filters are active, we must re-calculate the summary without them for the history.
@@ -851,14 +1183,10 @@ def index():
         total_summary = _calculate_portfolio_summary(trades, exchange_rate)
         if market_data_reliable and total_summary['market_data_complete']:
             _ensure_history_updated(total_summary)
-        else:
-            flash('Some live market data could not be fetched. Portfolio history was not updated.', 'warning')
     else:
         # No filters active, so we can use the summary we already have
         if market_data_reliable and summary['market_data_complete']:
             _ensure_history_updated(summary)
-        else:
-            flash('Some live market data could not be fetched. Portfolio history was not updated.', 'warning')
 
     # 4. Get the history data for the chart (now includes today's correct value).
     with sqlite3.connect(DATABASE) as conn:
@@ -873,8 +1201,10 @@ def index():
     return render_template('index.html', 
                            **summary, 
                            exchange_rate=exchange_rate, 
-                           prices_last_updated=prices_last_updated, 
+                           prices_last_updated=prices_last_updated,
+                           prices_last_updated_ago='just now',
                            fx_latest_data_at=fx_latest_data_at,
+                           fx_latest_data_ago=fx_latest_data_ago,
                            history_data=history_data, 
                            brokers=BROKERS,
                            selected_broker=broker_filter,
@@ -887,19 +1217,16 @@ def portfolio_health():
     if isinstance(exchange_data, dict):
         exchange_rate = exchange_data['rate']
         fx_latest_data_at = exchange_data.get('latest_data_at')
+        fx_latest_data_ago = _format_relative_time(exchange_data.get('latest_data_sort'))
     else:
         exchange_rate = exchange_data or 150.0
         fx_latest_data_at = None
-    if exchange_data is None:
-        flash('Could not fetch the live USD/JPY rate. Showing temporary health checks with a fallback rate.', 'warning')
-
-    with sqlite3.connect(DATABASE) as conn:
-        conn.row_factory = sqlite3.Row
-        trades = conn.execute('SELECT * FROM trades ORDER BY trade_date ASC').fetchall()
+        fx_latest_data_ago = None
+    trades = _fetch_normalized_trades()
 
     summary = _calculate_portfolio_summary(trades, exchange_rate)
-    if not summary['market_data_complete']:
-        flash('Some live market data could not be fetched. Health checks may be incomplete.', 'warning')
+    if exchange_data is None or not summary['market_data_complete']:
+        flash('Live market data is temporarily unavailable. Health checks are using cost-basis fallback values.', 'info')
 
     settings = get_health_settings()
     health = _calculate_portfolio_health(summary, settings)
@@ -911,6 +1238,8 @@ def portfolio_health():
         health=health,
         exchange_rate=exchange_rate,
         fx_latest_data_at=fx_latest_data_at,
+        fx_latest_data_ago=fx_latest_data_ago,
+        prices_last_updated_ago='just now',
         prices_last_updated=prices_last_updated
     )
 
@@ -955,9 +1284,7 @@ def api_portfolio():
         return jsonify({'error': 'Live USD/JPY exchange rate is unavailable.'}), 503
     exchange_rate = exchange_data['rate'] if isinstance(exchange_data, dict) else exchange_data
 
-    with sqlite3.connect(DATABASE) as conn:
-        conn.row_factory = sqlite3.Row
-        trades = conn.execute('SELECT * FROM trades ORDER BY trade_date ASC').fetchall()
+    trades = _fetch_normalized_trades()
 
     # 2. Perform the main calculation with filters.
     summary = _calculate_portfolio_summary(trades, exchange_rate, effective_broker_filter, effective_currency_filter)
@@ -965,15 +1292,16 @@ def api_portfolio():
     # 3. Return as JSON
     return jsonify(summary)
 
+@app.route('/api/version')
+def api_version():
+    return jsonify(get_app_version_status())
+
 def generate_tax_report_data(year):
     """
     Generates a tax report for a given year using the moving-average cost basis method.
     All calculations are performed in JPY.
     """
-    with sqlite3.connect(DATABASE) as conn:
-        conn.row_factory = sqlite3.Row
-        # Fetch all trades to build history correctly
-        trades = conn.execute('SELECT * FROM trades ORDER BY trade_date ASC').fetchall()
+    trades = _fetch_normalized_trades()
 
     holdings = {}  # Tracks the moving-average cost for each stock
     buy_history = {} # Tracks all buy transactions for the breakdown
@@ -1017,12 +1345,12 @@ def generate_tax_report_data(year):
 
             # Calculate cost of the buy transaction in JPY
             if trade['currency'] == 'JPY':
-                cost_jpy = (trade['quantity'] * trade['price']) + fee_jpy
+                cost_jpy = _trade_gross_value(trade) + fee_jpy
             elif trade['currency'] == 'USD' and trade['fx_rate']:
-                cost_jpy = (trade['quantity'] * trade['price'] * trade['fx_rate']) + fee_jpy
+                cost_jpy = (_trade_gross_value(trade) * trade['fx_rate']) + fee_jpy
 
             # Calculate cost of the buy transaction in native currency
-            cost_native = (trade['quantity'] * trade['price']) + fee_native
+            cost_native = _trade_gross_value(trade) + fee_native
 
             holdings[symbol]['quantity'] += trade['quantity']
             holdings[symbol]['total_cost_jpy'] += cost_jpy
@@ -1062,9 +1390,9 @@ def generate_tax_report_data(year):
                     fee_jpy = trade['fee_amount'] * trade['fx_rate']
             
             if trade['currency'] == 'JPY':
-                proceeds_jpy = (trade['quantity'] * trade['price']) - fee_jpy
+                proceeds_jpy = _trade_gross_value(trade) - fee_jpy
             elif trade['currency'] == 'USD' and trade['fx_rate']:
-                proceeds_jpy = (trade['quantity'] * trade['price'] * trade['fx_rate']) - fee_jpy
+                proceeds_jpy = (_trade_gross_value(trade) * trade['fx_rate']) - fee_jpy
 
             pnl_jpy = proceeds_jpy - cost_of_sale_jpy
 
@@ -1077,8 +1405,8 @@ def generate_tax_report_data(year):
                     'selling_fee_jpy': fee_jpy,
                     'last_purchase_date': holdings[symbol]['last_purchase_date'],
                     # --- Additions for breakdown ---
-                    'avg_cost_per_share_jpy': avg_cost_jpy,
-                    'avg_cost_per_share_native': avg_cost_native,
+                    'avg_cost_per_share_jpy': _display_price_basis(avg_cost_jpy, trade['instrument_type']),
+                    'avg_cost_per_share_native': _display_price_basis(avg_cost_native, trade['instrument_type']),
                     'sale_price_native': trade['price'],
                     'sale_currency': trade['currency'],
                     'sale_fx_rate': trade['fx_rate'],
@@ -1112,7 +1440,15 @@ def tax_report():
     """Handles the tax report generation."""
     with sqlite3.connect(DATABASE) as conn:
         # Get distinct years from trades to populate the dropdown
-        years_cursor = conn.execute("SELECT DISTINCT SUBSTR(trade_date, 1, 4) as year FROM trades ORDER BY year DESC")
+        years_cursor = conn.execute(
+            """
+            SELECT year FROM (
+                SELECT DISTINCT SUBSTR(trade_date, 1, 4) as year FROM trades
+                UNION
+                SELECT DISTINCT SUBSTR(trade_date, 1, 4) as year FROM mutual_fund_trades
+            ) ORDER BY year DESC
+            """
+        )
         available_years = [row[0] for row in years_cursor]
 
     report_data = None
@@ -1134,7 +1470,7 @@ def add_trade():
         if errors:
             for error in errors:
                 flash(error, 'danger')
-            return render_template('add_trade.html', today=values.get('trade_date') or datetime.utcnow().strftime('%Y-%m-%d'), brokers=BROKERS)
+            return render_template('add_trade.html', today=values.get('trade_date') or datetime.utcnow().strftime('%Y-%m-%d'), values=values, brokers=BROKERS)
 
         with sqlite3.connect(DATABASE) as conn:
             conn.execute(
@@ -1154,7 +1490,69 @@ def add_trade():
                 )
             )
         return redirect(url_for('list_trades'))
-    return render_template('add_trade.html', today=datetime.utcnow().strftime('%Y-%m-%d'), brokers=BROKERS)
+    return render_template('add_trade.html', today=datetime.utcnow().strftime('%Y-%m-%d'), values={}, brokers=BROKERS)
+
+@app.route('/mutual_funds')
+def list_mutual_fund_trades():
+    """Displays all mutual fund transactions."""
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        trades = conn.execute('SELECT * FROM mutual_fund_trades ORDER BY trade_date DESC').fetchall()
+    return render_template('mutual_fund_trades.html', trades=trades)
+
+@app.route('/add_mutual_fund_trade', methods=['GET', 'POST'])
+def add_mutual_fund_trade():
+    """Handles adding a Japanese mutual fund transaction."""
+    if request.method == 'POST':
+        _validate_csrf_token()
+        values, errors = _parse_mutual_fund_trade_form(request.form)
+        if errors:
+            for error in errors:
+                flash(error, 'danger')
+            return render_template(
+                'add_mutual_fund_trade.html',
+                today=values.get('trade_date') or datetime.utcnow().strftime('%Y-%m-%d'),
+                values=values,
+                brokers=BROKERS,
+                account_types=ACCOUNT_TYPES,
+                trade_details=TRADE_DETAILS
+            )
+
+        with sqlite3.connect(DATABASE) as conn:
+            conn.execute(
+                """
+                INSERT INTO mutual_fund_trades (
+                    fund_code, fund_name, transaction_type, transaction_detail,
+                    account_type, currency, executed_units, nav_per_10000,
+                    trade_date, settlement_date, settlement_amount, broker, fx_rate
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    values['fund_code'],
+                    values['fund_name'],
+                    values['transaction_type'],
+                    values['transaction_detail'],
+                    values['account_type'],
+                    values['currency'],
+                    values['executed_units'],
+                    values['nav_per_10000'],
+                    values['trade_date'],
+                    values['settlement_date'],
+                    values['settlement_amount'],
+                    values['broker'],
+                    values['fx_rate']
+                )
+            )
+        return redirect(url_for('list_mutual_fund_trades'))
+
+    return render_template(
+        'add_mutual_fund_trade.html',
+        today=datetime.utcnow().strftime('%Y-%m-%d'),
+        values={},
+        brokers=BROKERS,
+        account_types=ACCOUNT_TYPES,
+        trade_details=TRADE_DETAILS
+    )
 
 @app.route('/edit_trade/<int:trade_id>', methods=['GET', 'POST'])
 def edit_trade(trade_id):
@@ -1199,6 +1597,15 @@ def edit_trade(trade_id):
     if trade is None:
         abort(404)
     return render_template('edit_trade.html', trade=trade, brokers=BROKERS)
+
+@app.route('/delete_mutual_fund_trade/<int:trade_id>', methods=['POST'])
+def delete_mutual_fund_trade(trade_id):
+    """Deletes a mutual fund transaction."""
+    _validate_csrf_token()
+    with sqlite3.connect(DATABASE) as conn:
+        conn.execute('DELETE FROM mutual_fund_trades WHERE id = ?', (trade_id,))
+    flash('Mutual fund transaction deleted.', 'success')
+    return redirect(url_for('list_mutual_fund_trades'))
 
 @app.route('/delete_trade/<int:trade_id>', methods=['POST'])
 def delete_trade(trade_id):
@@ -1290,7 +1697,7 @@ def bulk_upload():
                         fee_currency_str = row.get('fee_currency', '').strip()
 
                         trades_to_add.append({
-                            'symbol': row['symbol'], 'name': row['name'], 'trade_type': trade_type,
+                            'symbol': row['symbol'].strip().upper(), 'name': row['name'], 'trade_type': trade_type,
                             'quantity': quantity, 'price': price, 'currency': currency, 
                             'trade_date': row['trade_date'], 'broker': row['broker'],
                             'fx_rate': float(fx_rate_str) if fx_rate_str else None,
@@ -1311,7 +1718,19 @@ def bulk_upload():
                         for trade in trades_to_add:
                             conn.execute(
                                 'INSERT INTO trades (symbol, name, trade_type, quantity, price, currency, trade_date, broker, fx_rate, fee_amount, fee_currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                                list(trade.values())
+                                (
+                                    trade['symbol'],
+                                    trade['name'],
+                                    trade['trade_type'],
+                                    trade['quantity'],
+                                    trade['price'],
+                                    trade['currency'],
+                                    trade['trade_date'],
+                                    trade['broker'],
+                                    trade['fx_rate'],
+                                    trade['fee_amount'],
+                                    trade['fee_currency']
+                                )
                             )
                     flash(f'Successfully uploaded and inserted {len(trades_to_add)} trades!', 'success')
                     return redirect(url_for('list_trades'))

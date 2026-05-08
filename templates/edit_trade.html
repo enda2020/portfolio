@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}Edit Trade{% endblock %}
+{% block title %}Edit Stock / ETF Trade{% endblock %}
 
 {% block content %}
 <div class="row">
     <div class="col-md-6 offset-md-3">
         <div class="card">
             <div class="card-header">
-                <h3 class="mb-0">Edit Trade</h3>
+                <h3 class="mb-0">Edit Stock / ETF Trade</h3>
             </div>
             <div class="card-body">
                 <form method="POST" action="{{ url_for('edit_trade', trade_id=trade.id) }}">
@@ -21,10 +21,10 @@
                         <input type="text" class="form-control" id="symbol" name="symbol" value="{{ trade.symbol }}" required>
                     </div>
                     <div class="mb-3">
-                        <label for="name" class="form-label">Company Name</label>
+                        <label for="name" class="form-label">Company / ETF Name</label>
                         <input type="text" class="form-control" id="name" name="name" value="{{ trade.name }}" required>
                     </div>
-                     <div class="mb-3">
+                    <div class="mb-3">
                         <label class="form-label">Trade Type</label>
                         <div class="form-check">
                             <input class="form-check-input" type="radio" name="trade_type" id="buy" value="BUY" {% if trade.trade_type == 'BUY' %}checked{% endif %}>
@@ -36,11 +36,11 @@
                         </div>
                     </div>
                     <div class="mb-3">
-                        <label for="quantity" class="form-label">Quantity</label>
+                        <label for="quantity" class="form-label">Shares</label>
                         <input type="number" step="any" class="form-control" id="quantity" name="quantity" value="{{ trade.quantity }}" required>
                     </div>
                     <div class="mb-3">
-                        <label for="price" class="form-label">Price (per share)</label>
+                        <label for="price" class="form-label">Price per Share</label>
                         <input type="number" step="any" class="form-control" id="price" name="price" value="{{ trade.price }}" required>
                     </div>
                     <div class="mb-3">

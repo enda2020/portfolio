@@ -17,11 +17,12 @@ A web application for tracking a stock portfolio by logging individual trades. I
 - **Data Management**:
     - Bulk upload trades from a CSV file with robust validation.
     - Export all trades to a CSV file for mass editing or backup.
-- **Live Market Data**: Fetches current stock prices and USD/JPY exchange rates from Yahoo Finance.
+- **Live Market Data**: Fetches current stock/ETF prices and USD/JPY exchange rates from Yahoo Finance, plus Japanese mutual fund NAVs from Yahoo Finance Japan.
 - **Performance & Production Ready**:
     - Market data is cached for 5 minutes to ensure fast page loads.
     - Dockerized with a multi-stage build, runs on a Gunicorn WSGI server, and includes a CI/CD pipeline for automated builds.
 - **Privacy Mode**: All monetary values can be masked/unmasked using the eye icon in the navigation bar. This setting is saved in your browser.
+- **Version Badge**: Shows the running app version in the navigation bar and can indicate when a newer version is available.
 
 ## Getting Started
 
@@ -38,6 +39,16 @@ Before running the application, you need to create an environment file to store 
     ```
     FLASK_SECRET_KEY=your_generated_secret_key_here
     ```
+
+### Version Checks
+
+The app reads its running version from the `VERSION` file, or from `APP_VERSION` if that environment variable is set. By default it checks the latest version at:
+
+```text
+https://raw.githubusercontent.com/enda2020/portfolio/main/VERSION
+```
+
+Set `APP_LATEST_VERSION_URL` to another plain-text version URL, or set it to an empty value to disable update checks.
 
 ### Option 1: Docker Compose (Easiest)
 
