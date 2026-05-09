@@ -248,8 +248,8 @@ def get_stock_price(symbol, currency):
     result = _empty_market_data()
 
     try:
-        # Fetch 15 days of data to get 14 days for sparkline and one previous day for change
-        history = _get_yfinance_history(api_symbol, period="15d")
+        # Fetch enough data for a 7-day sparkline and one previous day for change.
+        history = _get_yfinance_history(api_symbol, period="10d")
         _log_yfinance_history(api_symbol, history)
         if not history.empty and ('Close' in history.columns or 'close' in history.columns):
             # The column name can be 'Close' or 'close'. For the most recent entry,
@@ -265,8 +265,8 @@ def get_stock_price(symbol, currency):
             if len(history[price_col]) > 1:
                 result['change_today'] = float(history[price_col].iloc[-1] - history[price_col].iloc[-2])
             
-            # Get the last 14 days for the sparkline
-            result['sparkline_data'] = list(history[price_col].tail(14))
+            # Get the last 7 days for the sparkline
+            result['sparkline_data'] = list(history[price_col].tail(7))
 
             if currency == 'USD':
                 intraday_history = _get_yfinance_history(api_symbol, period="5d", interval="5m", prepost=True)

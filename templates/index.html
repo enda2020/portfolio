@@ -144,9 +144,9 @@
                                 <span class="badge bg-info ms-1">{{ stock.quote_session }}</span>
                                 {% endif %}
                             </td>
-                            <td><span class="sensitive-data">Â¥{{ "{:,.0f}".format(stock.current_value_jpy) }}</span></td>
+                            <td><span class="sensitive-data">&yen;{{ "{:,.0f}".format(stock.current_value_jpy) }}</span></td>
                             <td class="{{ 'text-success' if stock.pnl_jpy >= 0 else 'text-danger' }}">
-                                <span class="sensitive-data">{{- '+' if stock.pnl_jpy >= 0 else '' }}Â¥{{ "{:,.0f}".format(stock.pnl_jpy) }}</span>
+                                <span class="sensitive-data">{{- '+' if stock.pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(stock.pnl_jpy) }}</span>
                             </td>
                             <td class="{{ 'text-success' if stock.change_today >= 0 else 'text-danger' }}">
                                 <span class="sensitive-data">
@@ -198,7 +198,7 @@
                             <th scope="col">Current Value (JPY)</th>
                             <th scope="col">P&L (JPY)</th>
                             <th scope="col">Today's P&L (JPY)</th>
-                            <th scope="col">14d Trend</th>
+                            <th scope="col">7d Trend</th>
                         </tr>
                     </thead>
                     <tbody>
