@@ -134,6 +134,18 @@ def _version_tuple(version):
     return tuple(int(part) for part in parts[:3])
 
 @cache.memoize(timeout=3600)
+def _fetch_latest_app_version(latest_version_url):
+    try:
+        request_obj = urllib.request.Request(
+            latest_version_url,
+            headers={'User-Agent': f'portfolio-tracker/{APP_VERSION}'}
+        )
+        with urllib.request.urlopen(request_obj, timeout=3) as response:
+            latest = response.read().decode('utf-8', errors='replace').strip()
+        return latest or None, None
+    except Exception as e:
+        return None, str(e)
+
 def get_app_version_status():
     status = {
         'current': APP_VERSION,
@@ -146,19 +158,11 @@ def get_app_version_status():
     if not LATEST_VERSION_URL:
         return status
 
-    try:
-        request_obj = urllib.request.Request(
-            LATEST_VERSION_URL,
-            headers={'User-Agent': f'portfolio-tracker/{APP_VERSION}'}
-        )
-        with urllib.request.urlopen(request_obj, timeout=3) as response:
-            latest = response.read().decode('utf-8', errors='replace').strip()
-
-        if latest:
-            status['latest'] = latest
-            status['is_outdated'] = _version_tuple(latest) > _version_tuple(APP_VERSION)
-    except Exception as e:
-        status['error'] = str(e)
+    latest, error = _fetch_latest_app_version(LATEST_VERSION_URL)
+    status['latest'] = latest
+    status['error'] = error
+    if latest:
+        status['is_outdated'] = _version_tuple(latest) > _version_tuple(APP_VERSION)
 
     return status
 
@@ -876,9 +880,16 @@ def init_db():
             CREATE TABLE IF NOT EXISTS portfolio_history (
                 date TEXT PRIMARY KEY,
                 value_usd REAL NOT NULL,
-                value_jpy REAL NOT NULL
+                value_jpy REAL NOT NULL,
+                unrealized_pnl_usd REAL,
+                unrealized_pnl_jpy REAL
             )
         ''')
+        history_columns = [row[1] for row in conn.execute("PRAGMA table_info(portfolio_history)").fetchall()]
+        if 'unrealized_pnl_usd' not in history_columns:
+            conn.execute("ALTER TABLE portfolio_history ADD COLUMN unrealized_pnl_usd REAL")
+        if 'unrealized_pnl_jpy' not in history_columns:
+            conn.execute("ALTER TABLE portfolio_history ADD COLUMN unrealized_pnl_jpy REAL")
         conn.execute('''
             CREATE TABLE IF NOT EXISTS health_settings (
                 key TEXT PRIMARY KEY,
@@ -1109,7 +1120,7 @@ def _ensure_history_updated(current_summary):
         # correcting potentially stale values from earlier in the day. The UPSERT is idempotent.
 
         # 2. Backfill any missing days since the last snapshot
-        last_snapshot = conn.execute("SELECT date, value_usd, value_jpy FROM portfolio_history ORDER BY date DESC LIMIT 1").fetchone()
+        last_snapshot = conn.execute("SELECT date, value_usd, value_jpy, unrealized_pnl_usd, unrealized_pnl_jpy FROM portfolio_history ORDER BY date DESC LIMIT 1").fetchone()
         if last_snapshot:
             last_date = datetime.strptime(last_snapshot['date'], '%Y-%m-%d').date()
             # Only backfill if the last record is from before today
@@ -1121,8 +1132,14 @@ def _ensure_history_updated(current_summary):
                         missing_date_str = (last_date + timedelta(days=i)).strftime('%Y-%m-%d')
                         # Use INSERT OR IGNORE to be safe against race conditions during backfill.
                         conn.execute(
-                            "INSERT OR IGNORE INTO portfolio_history (date, value_usd, value_jpy) VALUES (?, ?, ?)",
-                            (missing_date_str, last_snapshot['value_usd'], last_snapshot['value_jpy'])
+                            "INSERT OR IGNORE INTO portfolio_history (date, value_usd, value_jpy, unrealized_pnl_usd, unrealized_pnl_jpy) VALUES (?, ?, ?, ?, ?)",
+                            (
+                                missing_date_str,
+                                last_snapshot['value_usd'],
+                                last_snapshot['value_jpy'],
+                                last_snapshot['unrealized_pnl_usd'],
+                                last_snapshot['unrealized_pnl_jpy']
+                            )
                         )
         
         # 3. Insert or Update (Upsert) today's value using the provided summary.
@@ -1131,13 +1148,21 @@ def _ensure_history_updated(current_summary):
         print(f"Upserting portfolio history snapshot for {today_str}...")
         conn.execute(
             """
-            INSERT INTO portfolio_history (date, value_usd, value_jpy)
-            VALUES (?, ?, ?)
+            INSERT INTO portfolio_history (date, value_usd, value_jpy, unrealized_pnl_usd, unrealized_pnl_jpy)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(date) DO UPDATE SET
                 value_usd = excluded.value_usd,
-                value_jpy = excluded.value_jpy
+                value_jpy = excluded.value_jpy,
+                unrealized_pnl_usd = excluded.unrealized_pnl_usd,
+                unrealized_pnl_jpy = excluded.unrealized_pnl_jpy
             """,
-            (today_str, current_summary['total_value_usd'], current_summary['total_value_jpy'])
+            (
+                today_str,
+                current_summary['total_value_usd'],
+                current_summary['total_value_jpy'],
+                current_summary['total_unrealized_pnl_usd'],
+                current_summary['total_unrealized_pnl_jpy']
+            )
         )
         print(f"Saved portfolio snapshot for {today_str}.")
 
@@ -1192,7 +1217,7 @@ def index():
     with sqlite3.connect(DATABASE) as conn:
         conn.row_factory = sqlite3.Row
         # Fetch the latest 365 days for the chart
-        history_rows = conn.execute("SELECT date, value_jpy FROM portfolio_history ORDER BY date DESC LIMIT 365").fetchall()
+        history_rows = conn.execute("SELECT date, value_jpy, unrealized_pnl_jpy FROM portfolio_history ORDER BY date DESC LIMIT 365").fetchall()
         # Reverse the list so the chart shows oldest to newest
         history_data = [dict(row) for row in reversed(history_rows)]
 
@@ -1432,7 +1457,23 @@ def list_trades():
     """Displays a list of all trades."""
     with sqlite3.connect(DATABASE) as conn:
         conn.row_factory = sqlite3.Row
-        trades = conn.execute('SELECT * FROM trades ORDER BY trade_date DESC').fetchall()
+        trade_rows = conn.execute('SELECT * FROM trades ORDER BY trade_date DESC').fetchall()
+
+    today = datetime.now().date()
+    trades = []
+    for trade in trade_rows:
+        trade_data = dict(trade)
+        trade_data['days_since_purchase'] = None
+        trade_data['sell_allowed'] = None
+        if trade_data['trade_type'] == 'BUY':
+            try:
+                purchase_date = datetime.strptime(trade_data['trade_date'], '%Y-%m-%d').date()
+                trade_data['days_since_purchase'] = max(0, (today - purchase_date).days)
+                trade_data['sell_allowed'] = trade_data['days_since_purchase'] >= 30
+            except ValueError:
+                pass
+        trades.append(trade_data)
+
     return render_template('trades.html', trades=trades)
 
 @app.route('/tax_report', methods=['GET', 'POST'])

@@ -35,6 +35,8 @@
                         <ul class="dropdown-menu" aria-labelledby="toolsMenu">
                             <li><a class="dropdown-item" href="{{ url_for('tax_report') }}">Tax Report</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('bulk_upload') }}">Bulk Upload</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="https://www.murc-kawasesouba.jp/fx/past_3month.php" target="_blank" rel="noopener">Historical FX Rates</a></li>
                         </ul>
                     </div>
                 </div>
@@ -71,6 +73,14 @@
                 {% endfor %}
             {% endif %}
         {% endwith %}
+        {% if app_version.is_outdated %}
+            <div class="alert alert-warning d-flex justify-content-between align-items-center" role="alert">
+                <span>
+                    Update available: running v{{ app_version.current }}, latest is v{{ app_version.latest }}.
+                </span>
+                <a class="btn btn-sm btn-outline-light" href="https://github.com/enda2020/portfolio" target="_blank" rel="noopener">View repo</a>
+            </div>
+        {% endif %}
         {% block content %}{% endblock %}
     </div>
 

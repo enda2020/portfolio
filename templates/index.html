@@ -99,6 +99,14 @@
                 <canvas id="valueHistoryChart" style="max-height: 300px;"></canvas>
             </div>
         </div>
+        <div class="card mt-4">
+            <div class="card-header">
+                <h4>Unrealized P&L Over Time (JPY)</h4>
+            </div>
+            <div class="card-body">
+                <canvas id="unrealizedHistoryChart" style="max-height: 170px;"></canvas>
+            </div>
+        </div>
     </div>
     <div class="col-lg-5 mb-4">
         <div class="card">
@@ -361,9 +369,14 @@ document.addEventListener('DOMContentLoaded', function () {
 
     renderSparklines();
 
+    function yenTick(value) {
+        return '¥' + new Intl.NumberFormat('ja-JP').format(value);
+    }
+
     if (historyData && historyData.length > 0) {
         const labels = historyData.map(h => h.date);
         const data = historyData.map(h => h.value_jpy);
+        const unrealizedData = historyData.map(h => h.unrealized_pnl_jpy);
 
         const lineChartData = {
             labels: labels,
@@ -386,9 +399,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 scales: {
                     y: {
                         ticks: {
-                            callback: function(value, index, values) {
-                                return '¥' + new Intl.NumberFormat('ja-JP').format(value);
-                            }
+                            callback: yenTick
                         }
                     }
                 }
@@ -396,6 +407,37 @@ document.addEventListener('DOMContentLoaded', function () {
         };
 
         new Chart(document.getElementById('valueHistoryChart'), lineConfig);
+
+        if (unrealizedData.some(value => value !== null && value !== undefined)) {
+            new Chart(document.getElementById('unrealizedHistoryChart'), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Unrealized P&L (JPY)',
+                        data: unrealizedData,
+                        borderColor: '#7aa7ff',
+                        backgroundColor: 'rgba(122, 167, 255, 0.12)',
+                        fill: true,
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: {
+                            ticks: {
+                                callback: yenTick
+                            }
+                        }
+                    }
+                }
+            });
+        }
     }
 });
 </script>

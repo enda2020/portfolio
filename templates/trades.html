@@ -24,6 +24,7 @@
                             <th>Broker</th>
                             <th>Quantity</th>
                             <th>Price</th>
+                            <th>Days Since Purchase</th>
                             <th>FX Rate</th>
                             <th>Fee</th>
                             <th>Actions</th>
@@ -38,6 +39,18 @@
                             <td>{{ trade.broker }}</td>
                             <td><span class="sensitive-data">{{ trade.quantity }}</span></td>
                             <td><span class="sensitive-data">{{ 'JPY ' if trade.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(trade.price) }}</span></td>
+                            <td>
+                                {% if trade.days_since_purchase is not none %}
+                                    <span class="sensitive-data">{{ trade.days_since_purchase }}</span>
+                                    {% if trade.sell_allowed %}
+                                        <span class="badge bg-success ms-1">OK</span>
+                                    {% else %}
+                                        <span class="badge bg-warning text-dark ms-1">Wait</span>
+                                    {% endif %}
+                                {% else %}
+                                    N/A
+                                {% endif %}
+                            </td>
                             <td><span class="sensitive-data">{{ "%.4f"|format(trade.fx_rate) if trade.fx_rate is not none else 'N/A' }}</span></td>
                             <td>
                                 {% if trade.fee_amount is not none and trade.fee_amount > 0 %}
