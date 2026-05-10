@@ -912,6 +912,7 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
     # cost basis and realized P&L across the entire history, regardless of filters.
     # Filters are applied later before calculating summary values.
     holdings = {}
+    today_str = datetime.now().strftime('%Y-%m-%d')
     for trade in trades:
         # Aggregate by both symbol and broker for more granular tracking
         instrument_type = trade['instrument_type'] if 'instrument_type' in trade.keys() else 'stock'
@@ -925,7 +926,9 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
                 'currency': trade['currency'],
                 'quantity': 0,
                 'total_cost': 0,
-                'realized_pnl_native': 0
+                'realized_pnl_native': 0,
+                'today_buy_quantity': 0,
+                'today_buy_cost': 0
             }
         
         # Fee calculation
@@ -941,8 +944,12 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
                 fee_in_native_currency = fee_amount * exchange_rate
 
         if trade['trade_type'] == 'BUY':
+            trade_cost_native = _trade_gross_value(trade) + fee_in_native_currency
             holdings[key]['quantity'] += trade['quantity']
-            holdings[key]['total_cost'] += _trade_gross_value(trade) + fee_in_native_currency
+            holdings[key]['total_cost'] += trade_cost_native
+            if trade['trade_date'] == today_str:
+                holdings[key]['today_buy_quantity'] += trade['quantity']
+                holdings[key]['today_buy_cost'] += trade_cost_native
         elif trade['trade_type'] == 'SELL':
             avg_unit_cost_basis = 0
             if holdings[key]['quantity'] > 0:
@@ -990,12 +997,16 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
                 'currency': data['currency'],
                 'quantity': 0,
                 'total_cost': 0,
+                'today_buy_quantity': 0,
+                'today_buy_cost': 0,
             }
         elif data['broker'] not in combined_holdings[combined_key]['brokers']:
             combined_holdings[combined_key]['brokers'].append(data['broker'])
 
         combined_holdings[combined_key]['quantity'] += data['quantity']
         combined_holdings[combined_key]['total_cost'] += data['total_cost']
+        combined_holdings[combined_key]['today_buy_quantity'] += data['today_buy_quantity']
+        combined_holdings[combined_key]['today_buy_cost'] += data['today_buy_cost']
 
     # --- Enrichment and Summary ---
     total_portfolio_value_usd = 0.0
@@ -1037,10 +1048,6 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
                 'sort': market_data['latest_data_sort']
             })
 
-        # Calculate Today's P&L for this holding
-        today_pnl_native = (data['quantity'] * data['change_today']) / _price_unit_factor(data['instrument_type'])
-        data['today_pnl_native'] = today_pnl_native
-
         # Calculate % change for today
         prev_close = data['current_price'] - data['change_today']
         if prev_close > 0:
@@ -1049,6 +1056,18 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
             data['change_today_percent'] = 0.0
 
         current_value_native = (data['quantity'] * data['current_price']) / _price_unit_factor(data['instrument_type'])
+
+        # Calculate Today's P&L for this holding. Shares bought today use purchase cost;
+        # overnight shares use the market's previous-close change.
+        today_buy_quantity = min(data['today_buy_quantity'], data['quantity'])
+        today_buy_cost = data['today_buy_cost']
+        if data['today_buy_quantity'] > data['quantity'] and data['today_buy_quantity'] > 0:
+            today_buy_cost *= data['quantity'] / data['today_buy_quantity']
+        overnight_quantity = max(0, data['quantity'] - today_buy_quantity)
+        overnight_today_pnl = (overnight_quantity * data['change_today']) / _price_unit_factor(data['instrument_type'])
+        today_buy_current_value = (today_buy_quantity * data['current_price']) / _price_unit_factor(data['instrument_type'])
+        today_pnl_native = overnight_today_pnl + (today_buy_current_value - today_buy_cost)
+        data['today_pnl_native'] = today_pnl_native
         
         # Calculate P&L
         cost_of_holding = data['quantity'] * data['avg_unit_cost_basis']
