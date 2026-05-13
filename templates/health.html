@@ -83,6 +83,29 @@
     </div>
 </div>
 
+<div class="card mb-4">
+    <div class="card-header">
+        <h4 class="mb-0">Portfolio Performance</h4>
+    </div>
+    <div class="card-body">
+        <p class="text-muted small mb-3">P&L change from portfolio snapshots and realized sales; buys are excluded from earnings.</p>
+        <div class="performance-grid">
+            {% for period in performance %}
+            <div class="performance-tile {{ 'performance-gain' if period.change_jpy >= 0 else 'performance-loss' }}">
+                <div class="performance-label">{{ period.label }}</div>
+                <div class="performance-value sensitive-data">
+                    {{ '+' if period.change_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(period.change_jpy) }}
+                </div>
+                <div class="performance-percent sensitive-data">
+                    {{ "{:+.2f}%".format(period.change_percent) }}
+                </div>
+                <div class="performance-note">{{ period.note }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
 <div class="row mb-4">
     <div class="col-lg-7 mb-4">
         <div class="card h-100">

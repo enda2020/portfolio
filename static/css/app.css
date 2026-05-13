@@ -184,6 +184,58 @@ h1 {
   --metric-color: var(--app-loss);
 }
 
+.performance-grid {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.performance-tile {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  min-height: 128px;
+  padding: 0.95rem;
+}
+
+.performance-label {
+  color: var(--app-muted);
+  font-size: 0.74rem;
+  font-weight: 760;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.performance-value {
+  color: var(--performance-color, var(--app-text));
+  font-size: clamp(1.18rem, 1.5vw, 1.58rem);
+  font-weight: 780;
+  line-height: 1.12;
+  margin-top: 0.65rem;
+  overflow-wrap: anywhere;
+}
+
+.performance-percent {
+  color: var(--performance-color, var(--app-text));
+  font-size: 0.95rem;
+  font-weight: 720;
+  margin-top: 0.35rem;
+}
+
+.performance-note {
+  color: var(--app-muted);
+  font-size: 0.78rem;
+  margin-top: 0.55rem;
+}
+
+.performance-gain {
+  --performance-color: var(--app-gain);
+}
+
+.performance-loss {
+  --performance-color: var(--app-loss);
+}
+
 .table {
   --bs-table-bg: transparent;
   --bs-table-border-color: var(--app-border);
@@ -378,6 +430,10 @@ canvas {
     min-height: 118px;
   }
 
+  .performance-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .table td,
   .table th {
     font-size: 0.84rem;
@@ -415,6 +471,10 @@ canvas {
 
   .metric-card .card-title {
     font-size: 1.32rem;
+  }
+
+  .performance-grid {
+    grid-template-columns: 1fr;
   }
 
   .page-toolbar {

@@ -703,13 +703,13 @@ def _parse_mutual_fund_trade_form(form):
         'fund_code': form.get('fund_code', '').strip().upper(),
         'fund_name': form.get('fund_name', '').strip(),
         'transaction_type': form.get('transaction_type', '').strip().upper(),
-        'transaction_detail': form.get('transaction_detail', '').strip() or None,
-        'account_type': form.get('account_type', '').strip() or None,
-        'currency': form.get('currency', 'JPY').strip().upper(),
+        'transaction_detail': None,
+        'account_type': None,
+        'currency': 'JPY',
         'executed_units': None,
         'nav_per_10000': None,
         'trade_date': form.get('trade_date', '').strip(),
-        'settlement_date': form.get('settlement_date', '').strip() or None,
+        'settlement_date': None,
         'settlement_amount': None,
         'broker': form.get('broker', '').strip(),
         'fx_rate': None,
@@ -722,12 +722,6 @@ def _parse_mutual_fund_trade_form(form):
 
     if values['transaction_type'] and values['transaction_type'] not in ['BUY', 'SELL']:
         errors.append("Transaction type must be BUY or SELL.")
-    if values['transaction_detail'] and values['transaction_detail'] not in TRADE_DETAILS:
-        errors.append("Transaction detail is not recognized.")
-    if values['account_type'] and values['account_type'] not in ACCOUNT_TYPES:
-        errors.append("Account type is not recognized.")
-    if values['currency'] != 'JPY':
-        errors.append("Japanese mutual fund trades must use JPY currency.")
     if values['broker'] and values['broker'] not in BROKERS:
         errors.append("Broker is not recognized.")
 
@@ -746,27 +740,9 @@ def _parse_mutual_fund_trade_form(form):
         errors.append("NAV must be a valid number.")
 
     try:
-        values['settlement_amount'] = _parse_optional_float(form.get('settlement_amount'))
-    except ValueError:
-        errors.append("Settlement amount must be a valid number.")
-
-    try:
-        values['fx_rate'] = _parse_optional_float(form.get('fx_rate'))
-        if values['fx_rate'] is not None and values['fx_rate'] <= 0:
-            errors.append("FX rate must be positive.")
-    except ValueError:
-        errors.append("FX rate must be a valid number.")
-
-    try:
         datetime.strptime(values['trade_date'], '%Y-%m-%d')
     except ValueError:
         errors.append("Trade date must be in YYYY-MM-DD format.")
-
-    if values['settlement_date']:
-        try:
-            datetime.strptime(values['settlement_date'], '%Y-%m-%d')
-        except ValueError:
-            errors.append("Settlement date must be in YYYY-MM-DD format.")
 
     return values, errors
 
@@ -1185,6 +1161,132 @@ def _ensure_history_updated(current_summary):
         )
         print(f"Saved portfolio snapshot for {today_str}.")
 
+def _calculate_realized_pnl_jpy_until(trades, through_date, fallback_exchange_rate):
+    """Calculates realized JPY P&L through a date using trade-date FX rates."""
+    holdings = {}
+    total_realized_pnl_jpy = 0.0
+    through_date_str = through_date.strftime('%Y-%m-%d')
+
+    for trade in trades:
+        if trade['trade_date'] > through_date_str:
+            continue
+
+        key = (trade['symbol'], trade['broker'], trade['instrument_type'])
+        if key not in holdings:
+            holdings[key] = {
+                'quantity': 0,
+                'total_cost_jpy': 0
+            }
+
+        fee_jpy = 0
+        if trade['fee_amount']:
+            if trade['fee_currency'] == 'JPY':
+                fee_jpy = trade['fee_amount']
+            elif trade['fee_currency'] == 'USD':
+                fee_jpy = trade['fee_amount'] * (trade['fx_rate'] or fallback_exchange_rate)
+
+        gross_value = _trade_gross_value(trade)
+        value_jpy = gross_value
+        if trade['currency'] == 'USD':
+            value_jpy = gross_value * (trade['fx_rate'] or fallback_exchange_rate)
+
+        holding = holdings[key]
+        if trade['trade_type'] == 'BUY':
+            holding['quantity'] += trade['quantity']
+            holding['total_cost_jpy'] += value_jpy + fee_jpy
+        elif trade['trade_type'] == 'SELL':
+            avg_cost_jpy = 0
+            if holding['quantity'] > 0:
+                avg_cost_jpy = holding['total_cost_jpy'] / holding['quantity']
+            cost_of_sale_jpy = trade['quantity'] * avg_cost_jpy
+            proceeds_jpy = value_jpy - fee_jpy
+            total_realized_pnl_jpy += proceeds_jpy - cost_of_sale_jpy
+            holding['quantity'] -= trade['quantity']
+            holding['total_cost_jpy'] -= cost_of_sale_jpy
+
+    return total_realized_pnl_jpy
+
+def _calculate_portfolio_performance(current_summary, trades, exchange_rate):
+    """Builds P&L-change snapshots for the health page performance cards."""
+    today_date = datetime.now().date()
+    current_value_jpy = current_summary['total_value_jpy']
+    today_pnl_jpy = current_summary['total_today_pnl_jpy']
+    current_realized_pnl_jpy = _calculate_realized_pnl_jpy_until(trades, today_date, exchange_rate)
+    current_total_pnl_jpy = current_summary['total_unrealized_pnl_jpy'] + current_realized_pnl_jpy
+
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        history_rows = conn.execute(
+            "SELECT date, value_jpy, unrealized_pnl_jpy FROM portfolio_history ORDER BY date ASC"
+        ).fetchall()
+
+    history = []
+    for row in history_rows:
+        try:
+            history.append({
+                'date': datetime.strptime(row['date'], '%Y-%m-%d').date(),
+                'date_label': row['date'],
+                'value_jpy': row['value_jpy'],
+                'unrealized_pnl_jpy': row['unrealized_pnl_jpy']
+            })
+        except (TypeError, ValueError):
+            continue
+
+    def build_entry(key, label, baseline_pnl_jpy, baseline_value_jpy, baseline_date=None, note=None):
+        change_jpy = current_total_pnl_jpy - baseline_pnl_jpy
+        change_percent = (change_jpy / baseline_value_jpy) * 100 if baseline_value_jpy else 0
+        return {
+            'key': key,
+            'label': label,
+            'change_jpy': change_jpy,
+            'change_percent': change_percent,
+            'baseline_pnl_jpy': baseline_pnl_jpy,
+            'baseline_value_jpy': baseline_value_jpy,
+            'baseline_date': baseline_date,
+            'note': note,
+            'has_baseline': baseline_value_jpy > 0
+        }
+
+    def closest_baseline(days_back):
+        target_date = today_date - timedelta(days=days_back)
+        previous_rows = [
+            row for row in history
+            if row['date'] <= target_date and row['unrealized_pnl_jpy'] is not None
+        ]
+        if previous_rows:
+            return previous_rows[-1], False
+        available_rows = [row for row in history if row['unrealized_pnl_jpy'] is not None]
+        if available_rows:
+            return available_rows[0], True
+        return None, False
+
+    day_baseline_value = current_value_jpy - today_pnl_jpy
+    day_baseline_pnl = current_total_pnl_jpy - today_pnl_jpy
+    performance = [
+        build_entry('day', 'Day', day_baseline_pnl, day_baseline_value, today_date.strftime('%Y-%m-%d'), 'today')
+    ]
+
+    for key, label, days_back in [
+        ('week', 'Week', 7),
+        ('month', 'Month', 30),
+        ('quarter', 'Quarter', 90),
+        ('year', 'Year', 365),
+    ]:
+        baseline, is_partial = closest_baseline(days_back)
+        if baseline:
+            note = f"since {baseline['date_label']}"
+            if is_partial:
+                note = f"since first snapshot {baseline['date_label']}"
+            baseline_realized_pnl_jpy = _calculate_realized_pnl_jpy_until(trades, baseline['date'], exchange_rate)
+            baseline_total_pnl_jpy = baseline['unrealized_pnl_jpy'] + baseline_realized_pnl_jpy
+            performance.append(
+                build_entry(key, label, baseline_total_pnl_jpy, baseline['value_jpy'], baseline['date_label'], note)
+            )
+        else:
+            performance.append(build_entry(key, label, current_total_pnl_jpy, current_value_jpy, note='no P&L history yet'))
+
+    return performance
+
 @app.route('/')
 def index():
     """Calculates and displays a summary of current holdings from trades."""
@@ -1271,15 +1373,19 @@ def portfolio_health():
     summary = _calculate_portfolio_summary(trades, exchange_rate)
     if exchange_data is None or not summary['market_data_complete']:
         flash('Live market data is temporarily unavailable. Health checks are using cost-basis fallback values.', 'info')
+    else:
+        _ensure_history_updated(summary)
 
     settings = get_health_settings()
     health = _calculate_portfolio_health(summary, settings)
+    performance = _calculate_portfolio_performance(summary, trades, exchange_rate)
     prices_last_updated = datetime.now().strftime('%Y-%m-%d %H:%M')
 
     return render_template(
         'health.html',
         **summary,
         health=health,
+        performance=performance,
         exchange_rate=exchange_rate,
         fx_latest_data_at=fx_latest_data_at,
         fx_latest_data_ago=fx_latest_data_ago,
@@ -1573,9 +1679,7 @@ def add_mutual_fund_trade():
                 'add_mutual_fund_trade.html',
                 today=values.get('trade_date') or datetime.utcnow().strftime('%Y-%m-%d'),
                 values=values,
-                brokers=BROKERS,
-                account_types=ACCOUNT_TYPES,
-                trade_details=TRADE_DETAILS
+                brokers=BROKERS
             )
 
         with sqlite3.connect(DATABASE) as conn:
@@ -1609,9 +1713,7 @@ def add_mutual_fund_trade():
         'add_mutual_fund_trade.html',
         today=datetime.utcnow().strftime('%Y-%m-%d'),
         values={},
-        brokers=BROKERS,
-        account_types=ACCOUNT_TYPES,
-        trade_details=TRADE_DETAILS
+        brokers=BROKERS
     )
 
 @app.route('/edit_trade/<int:trade_id>', methods=['GET', 'POST'])
