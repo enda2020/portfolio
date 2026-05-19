@@ -1,7 +1,8 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify, flash, Response, abort, session
 import sqlite3
 import yfinance as yf
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import csv
 import html
 import io
@@ -78,6 +79,61 @@ HEALTH_SETTING_LABELS = {
 }
 YFINANCE_TIMEOUT_SECONDS = float(os.environ.get('YFINANCE_TIMEOUT_SECONDS', '10'))
 YAHOO_JP_TIMEOUT_SECONDS = float(os.environ.get('YAHOO_JP_TIMEOUT_SECONDS', '10'))
+APP_SETTING_DEFAULTS = {
+    'daily_reset_time': os.environ.get('PORTFOLIO_DAILY_RESET_TIME', '08:30').strip(),
+    'daily_reset_timezone': os.environ.get('PORTFOLIO_DAILY_RESET_TIMEZONE', 'Asia/Tokyo').strip(),
+}
+APP_SETTING_LABELS = {
+    'daily_reset_time': 'Daily Reset Time',
+    'daily_reset_timezone': 'Daily Reset Timezone',
+}
+
+def _parse_daily_reset_time(value):
+    try:
+        hour, minute = [int(part) for part in value.split(':', 1)]
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return time(hour, minute)
+    except (AttributeError, TypeError, ValueError):
+        pass
+    print(f"Invalid daily reset time={value!r}; falling back to 08:30.")
+    return time(8, 30)
+
+def _is_valid_timezone(timezone_name):
+    try:
+        ZoneInfo(timezone_name)
+        return True
+    except (ZoneInfoNotFoundError, ValueError):
+        return False
+
+def _daily_reset_zone(timezone_name):
+    try:
+        return ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        print(f"Invalid daily reset timezone={timezone_name!r}; falling back to Asia/Tokyo.")
+        return ZoneInfo('Asia/Tokyo')
+
+def _get_daily_reset_settings():
+    try:
+        settings = get_app_settings()
+        return settings['daily_reset_time'], settings['daily_reset_timezone']
+    except Exception:
+        return APP_SETTING_DEFAULTS['daily_reset_time'], APP_SETTING_DEFAULTS['daily_reset_timezone']
+
+def _portfolio_now():
+    _reset_time, timezone_name = _get_daily_reset_settings()
+    return datetime.now(_daily_reset_zone(timezone_name))
+
+def _portfolio_day(now=None):
+    reset_time_value, _timezone_name = _get_daily_reset_settings()
+    reset_at = _parse_daily_reset_time(reset_time_value)
+    current = now or _portfolio_now()
+    portfolio_date = current.date()
+    if current.time() < reset_at:
+        portfolio_date -= timedelta(days=1)
+    return portfolio_date
+
+def _portfolio_day_str(now=None):
+    return _portfolio_day(now).strftime('%Y-%m-%d')
 
 def _get_yfinance_history(api_symbol, **kwargs):
     """Fetch yfinance history with a bounded network timeout."""
@@ -105,6 +161,7 @@ def _empty_market_data():
         'is_valid': False,
         'latest_data_at': None,
         'latest_data_sort': None,
+        'change_date': None,
         'quote_session': 'regular',
         'includes_extended_hours': False
     }
@@ -116,7 +173,7 @@ def _resolve_yahoo_jp_fund_code(symbol):
 def _format_yahoo_jp_quote_date(mm_dd_value):
     try:
         month, day = [int(part) for part in mm_dd_value.split('/')]
-        today = datetime.now()
+        today = _portfolio_now()
         quote_date = datetime(today.year, month, day)
         if quote_date.date() > today.date() + timedelta(days=30):
             quote_date = quote_date.replace(year=today.year - 1)
@@ -205,6 +262,7 @@ def get_yahoo_jp_mutual_fund_price(symbol):
                 'is_valid': True,
                 'latest_data_at': latest_data_at,
                 'latest_data_sort': latest_data_sort,
+                'change_date': latest_data_at,
                 'quote_session': 'daily NAV'
             })
             print(f"--- Using Yahoo JP NAV for {symbol} from {latest_data_at}: {result['current_price']} ---")
@@ -263,6 +321,7 @@ def get_stock_price(symbol, currency):
             result['current_price'] = float(history[price_col].iloc[-1])
             result['is_valid'] = True
             result['latest_data_at'], result['latest_data_sort'] = _format_market_timestamp(history.index[-1])
+            result['change_date'] = _market_date_str(history.index[-1])
             print(f"--- Using last available price for {symbol} from {result['latest_data_at']}: {result['current_price']} ---")
             
             # Calculate today's change if there's at least one previous day
@@ -385,6 +444,29 @@ def _format_market_timestamp(timestamp):
         return display, dt.timestamp()
     except Exception:
         return str(timestamp), str(timestamp)
+
+def _market_date_str(timestamp):
+    """Returns the calendar date represented by a daily market-data timestamp."""
+    if timestamp is None:
+        return None
+
+    try:
+        if hasattr(timestamp, 'to_pydatetime'):
+            dt = timestamp.to_pydatetime()
+        elif isinstance(timestamp, datetime):
+            dt = timestamp
+        else:
+            return None
+        return dt.date().strftime('%Y-%m-%d')
+    except Exception:
+        return None
+
+def _is_daily_change_current(change_date, portfolio_day):
+    if not change_date:
+        return False
+    if not isinstance(portfolio_day, str):
+        portfolio_day = portfolio_day.strftime('%Y-%m-%d')
+    return change_date == portfolio_day
 
 def _classify_us_market_session(timestamp):
     """Classifies a yfinance intraday timestamp as regular, pre-market, or post-market."""
@@ -813,6 +895,59 @@ def save_health_settings(settings):
             [(key, str(value)) for key, value in settings.items()]
         )
 
+def get_app_settings():
+    """Loads app-wide settings from the database, seeded from environment defaults."""
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.executemany(
+            "INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)",
+            [(key, str(value)) for key, value in APP_SETTING_DEFAULTS.items()]
+        )
+        rows = conn.execute("SELECT key, value FROM app_settings").fetchall()
+
+    settings = APP_SETTING_DEFAULTS.copy()
+    for row in rows:
+        key = row['key']
+        if key in settings:
+            settings[key] = row['value']
+    return settings
+
+def _parse_app_settings_form(form):
+    settings = {
+        'daily_reset_time': (form.get('daily_reset_time', '') or '').strip(),
+        'daily_reset_timezone': (form.get('daily_reset_timezone', '') or '').strip(),
+    }
+    errors = []
+
+    if not settings['daily_reset_time']:
+        errors.append("Daily Reset Time is required.")
+    elif not re.match(r'^\d{2}:\d{2}$', settings['daily_reset_time']):
+        errors.append("Daily Reset Time must use HH:MM format.")
+    else:
+        hour, minute = [int(part) for part in settings['daily_reset_time'].split(':', 1)]
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            errors.append("Daily Reset Time must be a valid 24-hour time.")
+        else:
+            settings['daily_reset_time'] = f"{hour:02d}:{minute:02d}"
+
+    if not settings['daily_reset_timezone']:
+        errors.append("Daily Reset Timezone is required.")
+    elif not _is_valid_timezone(settings['daily_reset_timezone']):
+        errors.append("Daily Reset Timezone must be a valid IANA timezone, like Asia/Tokyo.")
+
+    return settings, errors
+
+def save_app_settings(settings):
+    with sqlite3.connect(DATABASE) as conn:
+        conn.executemany(
+            """
+            INSERT INTO app_settings (key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            [(key, str(value)) for key, value in settings.items()]
+        )
+
 # Database setup
 def init_db():
     """Initializes the database, creating the data directory and tables if they don't exist."""
@@ -876,6 +1011,16 @@ def init_db():
             "INSERT OR IGNORE INTO health_settings (key, value) VALUES (?, ?)",
             [(key, str(value)) for key, value in HEALTH_SETTING_DEFAULTS.items()]
         )
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        ''')
+        conn.executemany(
+            "INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)",
+            [(key, str(value)) for key, value in APP_SETTING_DEFAULTS.items()]
+        )
     print("Database tables ensured to exist.")
 
 def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, currency_filter=None):
@@ -888,7 +1033,8 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
     # cost basis and realized P&L across the entire history, regardless of filters.
     # Filters are applied later before calculating summary values.
     holdings = {}
-    today_str = datetime.now().strftime('%Y-%m-%d')
+    today_str = _portfolio_day_str()
+    portfolio_day = _portfolio_day()
     for trade in trades:
         # Aggregate by both symbol and broker for more granular tracking
         instrument_type = trade['instrument_type'] if 'instrument_type' in trade.keys() else 'stock'
@@ -1012,6 +1158,11 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
                 'change_today': 0.0,
                 'quote_session': 'cost basis fallback'
             }
+        elif not _is_daily_change_current(market_data.get('change_date'), portfolio_day):
+            market_data = {
+                **market_data,
+                'change_today': 0.0,
+            }
         data['current_price'] = market_data['current_price']
         data['change_today'] = market_data['change_today']
         data['sparkline_data'] = market_data['sparkline_data']
@@ -1105,8 +1256,8 @@ def _ensure_history_updated(current_summary):
     This is an idempotent operation that is safe to call on every request.
     It uses the pre-calculated summary to avoid redundant work.
     """
-    today_str = datetime.now().strftime('%Y-%m-%d')
-    today_date = datetime.now().date()
+    today_date = _portfolio_day()
+    today_str = today_date.strftime('%Y-%m-%d')
 
     with sqlite3.connect(DATABASE) as conn:
         conn.row_factory = sqlite3.Row
@@ -1208,7 +1359,7 @@ def _calculate_realized_pnl_jpy_until(trades, through_date, fallback_exchange_ra
 
 def _calculate_portfolio_performance(current_summary, trades, exchange_rate):
     """Builds P&L-change snapshots for the health page performance cards."""
-    today_date = datetime.now().date()
+    today_date = _portfolio_day()
     current_value_jpy = current_summary['total_value_jpy']
     today_pnl_jpy = current_summary['total_today_pnl_jpy']
     current_realized_pnl_jpy = _calculate_realized_pnl_jpy_until(trades, today_date, exchange_rate)
@@ -1343,7 +1494,7 @@ def index():
         history_data = [dict(row) for row in reversed(history_rows)]
 
     # 5. Render the page
-    prices_last_updated = datetime.now().strftime('%Y-%m-%d %H:%M')
+    prices_last_updated = _portfolio_now().strftime('%Y-%m-%d %H:%M')
     return render_template('index.html', 
                            **summary, 
                            exchange_rate=exchange_rate, 
@@ -1379,7 +1530,7 @@ def portfolio_health():
     settings = get_health_settings()
     health = _calculate_portfolio_health(summary, settings)
     performance = _calculate_portfolio_performance(summary, trades, exchange_rate)
-    prices_last_updated = datetime.now().strftime('%Y-%m-%d %H:%M')
+    prices_last_updated = _portfolio_now().strftime('%Y-%m-%d %H:%M')
 
     return render_template(
         'health.html',
@@ -1413,6 +1564,28 @@ def health_settings():
         'health_settings.html',
         settings=settings,
         labels=HEALTH_SETTING_LABELS
+    )
+
+@app.route('/config', methods=['GET', 'POST'])
+def app_config():
+    """Lets the user edit app-wide configuration."""
+    settings = get_app_settings()
+
+    if request.method == 'POST':
+        _validate_csrf_token()
+        settings, errors = _parse_app_settings_form(request.form)
+        if errors:
+            for error in errors:
+                flash(error, 'danger')
+        else:
+            save_app_settings(settings)
+            flash('Configuration saved.', 'success')
+            return redirect(url_for('app_config'))
+
+    return render_template(
+        'config.html',
+        settings=settings,
+        labels=APP_SETTING_LABELS
     )
 
 @app.route('/api/portfolio')
@@ -1584,7 +1757,7 @@ def list_trades():
         conn.row_factory = sqlite3.Row
         trade_rows = conn.execute('SELECT * FROM trades ORDER BY trade_date DESC').fetchall()
 
-    today = datetime.now().date()
+    today = _portfolio_now().date()
     trades = []
     for trade in trade_rows:
         trade_data = dict(trade)
@@ -1636,7 +1809,7 @@ def add_trade():
         if errors:
             for error in errors:
                 flash(error, 'danger')
-            return render_template('add_trade.html', today=values.get('trade_date') or datetime.utcnow().strftime('%Y-%m-%d'), values=values, brokers=BROKERS)
+            return render_template('add_trade.html', today=values.get('trade_date') or _portfolio_day_str(), values=values, brokers=BROKERS)
 
         with sqlite3.connect(DATABASE) as conn:
             conn.execute(
@@ -1656,7 +1829,7 @@ def add_trade():
                 )
             )
         return redirect(url_for('list_trades'))
-    return render_template('add_trade.html', today=datetime.utcnow().strftime('%Y-%m-%d'), values={}, brokers=BROKERS)
+    return render_template('add_trade.html', today=_portfolio_day_str(), values={}, brokers=BROKERS)
 
 @app.route('/mutual_funds')
 def list_mutual_fund_trades():
@@ -1677,7 +1850,7 @@ def add_mutual_fund_trade():
                 flash(error, 'danger')
             return render_template(
                 'add_mutual_fund_trade.html',
-                today=values.get('trade_date') or datetime.utcnow().strftime('%Y-%m-%d'),
+                today=values.get('trade_date') or _portfolio_day_str(),
                 values=values,
                 brokers=BROKERS
             )
@@ -1711,7 +1884,7 @@ def add_mutual_fund_trade():
 
     return render_template(
         'add_mutual_fund_trade.html',
-        today=datetime.utcnow().strftime('%Y-%m-%d'),
+        today=_portfolio_day_str(),
         values={},
         brokers=BROKERS
     )

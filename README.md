@@ -50,6 +50,17 @@ https://raw.githubusercontent.com/enda2020/portfolio/main/VERSION
 
 Set `APP_LATEST_VERSION_URL` to another plain-text version URL, or set it to an empty value to disable update checks.
 
+### Daily Reset
+
+Dashboard "today" values reset at 08:30 Japan time by default. After the reset, stale daily market moves from the previous market day are shown as zero, so Friday's daily values do not continue through the weekend.
+
+You can change the reset time from Tools -> Config. These environment variables seed the defaults for a fresh database:
+
+```text
+PORTFOLIO_DAILY_RESET_TIME=08:30
+PORTFOLIO_DAILY_RESET_TIMEZONE=Asia/Tokyo
+```
+
 ### Option 1: Docker Compose (Easiest)
 
 This is the recommended way to run the application. It uses the pre-built image from Docker Hub and automatically uses the local `data/` directory for database storage.

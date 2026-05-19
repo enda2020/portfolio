@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}Config{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="mb-0">Config</h1>
+    <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
+        <i class="fas fa-arrow-left me-1"></i> Dashboard
+    </a>
+</div>
+
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0">Daily Values</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('app_config') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="daily_reset_time" class="form-label">{{ labels.daily_reset_time }}</label>
+                            <input type="time" class="form-control" id="daily_reset_time" name="daily_reset_time" value="{{ settings.daily_reset_time }}" required>
+                            <div class="form-text">Controls when dashboard today values roll over.</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="daily_reset_timezone" class="form-label">{{ labels.daily_reset_timezone }}</label>
+                            <input type="text" class="form-control" id="daily_reset_timezone" name="daily_reset_timezone" value="{{ settings.daily_reset_timezone }}" required>
+                            <div class="form-text">Use an IANA timezone such as Asia/Tokyo.</div>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">Save Config</button>
+                    <a href="{{ url_for('index') }}" class="btn btn-secondary">Cancel</a>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4 mt-4 mt-lg-0">
+        <div class="card">
+            <div class="card-header">Storage</div>
+            <div class="card-body">
+                <p class="text-muted">Config values are stored in SQLite under the mounted data directory, so they persist across Docker restarts.</p>
+                <p class="mb-0 text-muted">Environment variables provide the initial defaults for a fresh database.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
