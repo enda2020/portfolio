@@ -10,9 +10,9 @@
         <h1 class="mb-4">Japanese Tax Report Generator</h1>
         <div class="card mb-4">
             <div class="card-body">
-                <form method="POST" class="row align-items-end">
+                <form method="POST" class="row g-3 align-items-end">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <div class="col-md-4">
+                    <div class="col-md-3">
                         <label for="year" class="form-label">Select Financial Year</label>
                         <select name="year" id="year" class="form-select">
                             {% for year in years %}
@@ -20,7 +20,34 @@
                             {% endfor %}
                         </select>
                     </div>
-                    <div class="col-md-4">
+                    <div class="col-md-3">
+                        <label for="broker" class="form-label">Broker</label>
+                        <select name="broker" id="broker" class="form-select">
+                            <option value="all" {% if not report_data or report_data.selected_broker == 'all' %}selected{% endif %}>All Brokers</option>
+                            {% for broker in brokers %}
+                            <option value="{{ broker }}" {% if report_data and report_data.selected_broker == broker %}selected{% endif %}>{{ broker }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="account_name" class="form-label">Account</label>
+                        <select name="account_name" id="account_name" class="form-select">
+                            <option value="all" {% if not report_data or report_data.selected_account_name == 'all' %}selected{% endif %}>All Accounts</option>
+                            {% for account_name in account_names %}
+                            <option value="{{ account_name }}" {% if report_data and report_data.selected_account_name == account_name %}selected{% endif %}>{{ account_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="tax_status" class="form-label">Tax Status</label>
+                        <select name="tax_status" id="tax_status" class="form-select">
+                            <option value="all" {% if not report_data or report_data.selected_tax_status == 'all' %}selected{% endif %}>All Tax Statuses</option>
+                            {% for tax_status in tax_statuses %}
+                            <option value="{{ tax_status }}" {% if report_data and report_data.selected_tax_status == tax_status %}selected{% endif %}>{{ tax_status }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
                         <button type="submit" class="btn btn-primary">Generate Report</button>
                     </div>
                 </form>
@@ -70,6 +97,8 @@
                         <th>Symbol</th>
                         <th>Company Name</th>
                         <th>Brokerage</th>
+                        <th>Account</th>
+                        <th>Tax Status</th>
                         <th>Quantity Sold</th>
                         <th>Latest Purchase Date</th>
                         <th>Sale Proceeds (JPY)</th>
@@ -86,6 +115,8 @@
                         <td><strong>{{ sale.symbol }}</strong></td>
                         <td>{{ sale.name }}</td>
                         <td>{{ sale.broker }}</td>
+                        <td>{{ sale.account_name }}</td>
+                        <td>{{ sale.tax_status }}</td>
                         <td><span class="sensitive-data">{{ "%.2f"|format(sale.quantity) }}</span></td>
                         <td>{{ sale.last_purchase_date or 'N/A' }}</td>
                         <td><span class="sensitive-data">¥{{ "{:,.0f}".format(sale.proceeds_jpy) }}</span></td>
@@ -99,7 +130,7 @@
                         </td>
                     </tr>
                     <tr class="collapse-row">
-                        <td colspan="11" class="p-0" style="border: none;">
+                        <td colspan="13" class="p-0" style="border: none;">
                             <div class="collapse" id="collapse-{{ loop.index }}">
                                 <div class="card card-body m-2 border-secondary">
                                     <h5 class="card-title">Calculation for {{ sale.symbol }} sale on {{ sale.trade_date }}</h5>

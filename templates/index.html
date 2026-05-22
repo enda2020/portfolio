@@ -29,7 +29,7 @@
 <div class="card mb-4">
     <div class="card-body">
         <form method="GET" action="{{ url_for('index') }}" id="filterForm" class="row g-3 align-items-end">
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <label for="brokerFilter" class="form-label">Filter by Broker</label>
                 <select id="brokerFilter" name="broker" class="form-select">
                     <option value="all" {% if selected_broker == 'all' %}selected{% endif %}>All Brokers</option>
@@ -38,7 +38,25 @@
                     {% endfor %}
                 </select>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
+                <label for="accountNameFilter" class="form-label">Filter by Account</label>
+                <select id="accountNameFilter" name="account_name" class="form-select">
+                    <option value="all" {% if selected_account_name == 'all' %}selected{% endif %}>All Accounts</option>
+                    {% for account_name in account_names %}
+                    <option value="{{ account_name }}" {% if selected_account_name == account_name %}selected{% endif %}>{{ account_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label for="taxStatusFilter" class="form-label">Filter by Tax Status</label>
+                <select id="taxStatusFilter" name="tax_status" class="form-select">
+                    <option value="all" {% if selected_tax_status == 'all' %}selected{% endif %}>All Tax Statuses</option>
+                    {% for tax_status in tax_statuses %}
+                    <option value="{{ tax_status }}" {% if selected_tax_status == tax_status %}selected{% endif %}>{{ tax_status }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
                 <label for="currencyFilter" class="form-label">Filter by Currency</label>
                 <select id="currencyFilter" name="currency" class="form-select">
                     <option value="all" {% if selected_currency == 'all' %}selected{% endif %}>All Currencies</option>
@@ -55,17 +73,17 @@
         <div class="card metric-card metric-accent h-100">
             <div class="card-header">Portfolio Value</div>
             <div class="card-body">
-                <h3 class="card-title">¥<span class="sensitive-data">{{ "{:,.0f}".format(total_value_jpy) }}</span></h3>
-                <p class="card-text text-white-50">≈ $<span class="sensitive-data">{{ "{:,.2f}".format(total_value_usd) }}</span></p>
+                <h3 class="card-title">&yen;<span class="sensitive-data">{{ "{:,.0f}".format(total_value_jpy) }}</span></h3>
+                <p class="card-text text-white-50">approx. $<span class="sensitive-data">{{ "{:,.2f}".format(total_value_usd) }}</span></p>
             </div>
         </div>
     </div>
     <div class="col-lg-3 col-md-6 mb-4">
         <div class="card metric-card h-100 {{ 'metric-positive' if total_today_pnl_jpy >= 0 else 'metric-negative' }}">
-            <div class="card-header">Today's P&L</div>
+            <div class="card-header">Today's P&amp;L</div>
             <div class="card-body">
-                <h3 class="card-title"><span class="sensitive-data">{{- '+' if total_today_pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(total_today_pnl_jpy) }}</span></h3>
-                <p class="card-text text-white-50">≈ <span class="sensitive-data">{{ '+' if total_today_pnl_usd >= 0 else '' }}${{ "{:,.2f}".format(total_today_pnl_usd) }}</span></p>
+                <h3 class="card-title"><span class="sensitive-data">{{- '+' if total_today_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_today_pnl_jpy) }}</span></h3>
+                <p class="card-text text-white-50">approx. <span class="sensitive-data">{{ '+' if total_today_pnl_usd >= 0 else '' }}${{ "{:,.2f}".format(total_today_pnl_usd) }}</span></p>
             </div>
         </div>
     </div>
@@ -73,8 +91,8 @@
         <div class="card metric-card h-100 {{ 'metric-positive' if total_unrealized_pnl_jpy >= 0 else 'metric-negative' }}">
             <div class="card-header">Unrealized</div>
             <div class="card-body">
-                <h3 class="card-title"><span class="sensitive-data">{{- '+' if total_unrealized_pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(total_unrealized_pnl_jpy) }}</span></h3>
-                <p class="card-text text-white-50">≈ <span class="sensitive-data">{{ '+' if total_unrealized_pnl_usd >= 0 else '' }}${{ "{:,.2f}".format(total_unrealized_pnl_usd) }}</span></p>
+                <h3 class="card-title"><span class="sensitive-data">{{- '+' if total_unrealized_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_unrealized_pnl_jpy) }}</span></h3>
+                <p class="card-text text-white-50">approx. <span class="sensitive-data">{{ '+' if total_unrealized_pnl_usd >= 0 else '' }}${{ "{:,.2f}".format(total_unrealized_pnl_usd) }}</span></p>
             </div>
         </div>
     </div>
@@ -82,8 +100,8 @@
         <div class="card metric-card h-100 {{ 'metric-positive' if total_realized_pnl_jpy >= 0 else 'metric-negative' }}">
             <div class="card-header">Realized</div>
             <div class="card-body">
-                <h3 class="card-title"><span class="sensitive-data">{{- '+' if total_realized_pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(total_realized_pnl_jpy) }}</span></h3>
-                <p class="card-text text-white-50">≈ <span class="sensitive-data">{{ '+' if total_realized_pnl_usd >= 0 else '' }}${{ "{:,.2f}".format(total_realized_pnl_usd) }}</span></p>
+                <h3 class="card-title"><span class="sensitive-data">{{- '+' if total_realized_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_realized_pnl_jpy) }}</span></h3>
+                <p class="card-text text-white-50">approx. <span class="sensitive-data">{{ '+' if total_realized_pnl_usd >= 0 else '' }}${{ "{:,.2f}".format(total_realized_pnl_usd) }}</span></p>
             </div>
         </div>
     </div>
@@ -101,7 +119,7 @@
         </div>
         <div class="card mt-4">
             <div class="card-header">
-                <h4>Unrealized P&L Over Time (JPY)</h4>
+                <h4>Unrealized P&amp;L Over Time (JPY)</h4>
             </div>
             <div class="card-body">
                 <canvas id="unrealizedHistoryChart" style="max-height: 170px;"></canvas>
@@ -127,27 +145,32 @@
     <div class="card-body">
         {% if stocks %}
             <div class="table-responsive">
-                <table class="table table-hover table-dark" style="margin-bottom: 0;">
+                <table class="table table-hover table-dark holdings-table" style="margin-bottom: 0;">
                     <thead>
                         <tr>
+                            <th scope="col"></th>
                             <th scope="col">Symbol</th>
                             <th scope="col">Quantity</th>
                             <th scope="col">Avg. Cost</th>
                             <th scope="col">Current Price</th>
                             <th scope="col">Value</th>
-                            <th scope="col">Total P&L</th>
+                            <th scope="col">Total P&amp;L</th>
                             <th scope="col">Today</th>
-                            <th scope="col">Today's P&L</th>
+                            <th scope="col">Today's P&amp;L</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for stock in stocks %}
-                        <tr>
-                            <td><strong>{{ stock.symbol }}</strong></td>
-                            <td><span class="sensitive-data">{{ "%.2f"|format(stock.quantity) }}</span></td>
-                            <td><span class="sensitive-data">{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.avg_cost_basis) }}</span></td>
+                        <tr class="holding-row" data-bs-toggle="collapse" data-bs-target="#holding-detail-{{ loop.index }}" aria-expanded="false" aria-controls="holding-detail-{{ loop.index }}">
+                            <td><i class="fas fa-chevron-right holding-row-icon"></i></td>
                             <td>
-                                <span class="sensitive-data">{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.current_price) }}</span>
+                                <strong>{{ stock.symbol }}</strong><br>
+                                <small class="text-muted">{{ stock.name }}</small>
+                            </td>
+                            <td><span class="sensitive-data">{{ "%.2f"|format(stock.quantity) }}</span></td>
+                            <td><span class="sensitive-data">{{ '&yen;'|safe if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.avg_cost_basis) }}</span></td>
+                            <td>
+                                <span class="sensitive-data">{{ '&yen;'|safe if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.current_price) }}</span>
                                 {% if stock.quote_session != 'regular' %}
                                 <span class="badge bg-info ms-1">{{ stock.quote_session }}</span>
                                 {% endif %}
@@ -157,101 +180,87 @@
                                 <span class="sensitive-data">{{- '+' if stock.pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(stock.pnl_jpy) }}</span>
                             </td>
                             <td class="{{ 'text-success' if stock.change_today >= 0 else 'text-danger' }}">
-                                <span class="sensitive-data">
-                                    {{- '+' if stock.change_today >= 0 else '' }}{{ "{:,.2f}".format(stock.change_today) }}
-                                </span>
+                                <span class="sensitive-data">{{- '+' if stock.change_today >= 0 else '' }}{{ "{:,.2f}".format(stock.change_today) }}</span>
                             </td>
                             <td class="sensitive-data {{ 'text-success' if stock.today_pnl_jpy > 0 else 'text-danger' if stock.today_pnl_jpy < 0 else '' }}">
-                                {{- '+' if stock.today_pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(stock.today_pnl_jpy) }}
+                                {{- '+' if stock.today_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(stock.today_pnl_jpy) }}
+                            </td>
+                        </tr>
+                        <tr class="holding-detail-row">
+                            <td colspan="9" class="p-0">
+                                <div class="collapse" id="holding-detail-{{ loop.index }}">
+                                    <div class="holding-detail">
+                                        <div class="row g-3 mb-3">
+                                            <div class="col-md-3">
+                                                <div class="detail-label">Broker</div>
+                                                <div>{{ stock.broker }}</div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="detail-label">Currency</div>
+                                                <div>{{ stock.currency }}</div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="detail-label">1D Change</div>
+                                                <div class="sensitive-data {{ 'text-success' if stock.change_today_percent > 0 else 'text-danger' if stock.change_today_percent < 0 else '' }}">{{ "{:+.2f}%".format(stock.change_today_percent) }}</div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="detail-label">Current Value</div>
+                                                <div class="sensitive-data">&yen;{{ "{:,.0f}".format(stock.current_value_jpy) }}</div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="detail-label">Unrealized P&amp;L</div>
+                                                <div class="sensitive-data {{ 'text-success' if stock.pnl_jpy >= 0 else 'text-danger' }}">{{- '+' if stock.pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(stock.pnl_jpy) }}</div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="detail-label">7d Trend</div>
+                                                <canvas class="sparkline" data-sparkline-data="{{ stock.sparkline_data|tojson }}" width="120" height="34"></canvas>
+                                            </div>
+                                        </div>
+
+                                        <div class="table-responsive">
+                                            <table class="table table-sm table-dark holding-trades-table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Date</th>
+                                                        <th>Type</th>
+                                                        <th>Broker</th>
+                                                        <th>Qty</th>
+                                                        <th>Price</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {% for trade in stock.trade_history %}
+                                                    <tr>
+                                                        <td>{{ trade.trade_date }}</td>
+                                                        <td>{{ trade.trade_type }}</td>
+                                                        <td>{{ trade.broker }}</td>
+                                                        <td><span class="sensitive-data">{{ "%.2f"|format(trade.quantity) }}</span></td>
+                                                        <td><span class="sensitive-data">{{ '&yen;'|safe if trade.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(trade.price_display) }}</span></td>
+                                                    </tr>
+                                                    {% endfor %}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
                             </td>
                         </tr>
                         {% endfor %}
                     </tbody>
                     <tfoot>
                         <tr class="table-active">
-                            <td colspan="7" class="text-end"><strong>Total Today's P&L:</strong></td>
+                            <td colspan="8" class="text-end"><strong>Total Today's P&amp;L:</strong></td>
                             <td class="sensitive-data {{ 'text-success' if total_today_pnl_jpy > 0 else 'text-danger' if total_today_pnl_jpy < 0 else '' }}">
-                                <strong>{{- '+' if total_today_pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(total_today_pnl_jpy) }}</strong>
+                                <strong>{{- '+' if total_today_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_today_pnl_jpy) }}</strong>
                             </td>
                         </tr>
                     </tfoot>
                 </table>
             </div>
         {% else %}
-            <div class="text-center p-3">
-                <p class="mb-0">No holdings to display.</p>
-            </div>
-        {% endif %}
-    </div>
-</div>
-
-<div class="card">
-    <div class="card-header">
-        <h4>Full Portfolio</h4>
-    </div>
-    <div class="card-body">
-        {% if stocks %}
-            <div class="table-responsive">
-                <table class="table table-hover table-dark" style="margin-bottom: 0;">
-                    <thead>
-                        <tr>
-                            <th scope="col">Symbol</th>
-                            <th scope="col">Broker</th>
-                            <th scope="col">Name</th>
-                            <th scope="col">Quantity</th>
-                            <th scope="col">Avg. Cost</th>
-                            <th scope="col">Current Price</th>
-                            <th scope="col">Today</th>
-                            <th scope="col">% Change (1D)</th>
-                            <th scope="col">Current Value (JPY)</th>
-                            <th scope="col">P&L (JPY)</th>
-                            <th scope="col">Today's P&L (JPY)</th>
-                            <th scope="col">7d Trend</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for stock in stocks %}
-                        <tr>
-                            <td><strong>{{ stock.symbol }}</strong></td>
-                            <td>{{ stock.broker }}</td>
-                            <td>{{ stock.name }}</td>
-                            <td><span class="sensitive-data">{{ "%.2f"|format(stock.quantity) }}</span></td>
-                            <td><span class="sensitive-data">{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.avg_cost_basis) }}</span></td>
-                            <td>
-                                <span class="sensitive-data">{{ '¥' if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.current_price) }}</span>
-                                {% if stock.quote_session != 'regular' %}
-                                <span class="badge bg-info ms-1">{{ stock.quote_session }}</span>
-                                {% endif %}
-                            </td>
-                            <td class="{{ 'text-success' if stock.change_today >= 0 else 'text-danger' }}">
-                                <span class="sensitive-data">
-                                    {{- '+' if stock.change_today >= 0 else '' }}{{ "{:,.2f}".format(stock.change_today) }}
-                                </span>
-                            </td>
-                            <td class="sensitive-data {{ 'text-success' if stock.change_today_percent > 0 else 'text-danger' if stock.change_today_percent < 0 else '' }}">
-                                {{ "{:+.2f}%".format(stock.change_today_percent) }}
-                            </td>
-                            <td><span class="sensitive-data">¥{{ "{:,.0f}".format(stock.current_value_jpy) }}</span></td>
-                            <td class="{{ 'text-success' if stock.pnl_jpy >= 0 else 'text-danger' }}">
-                                <span class="sensitive-data">{{- '+' if stock.pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(stock.pnl_jpy) }}</span>
-                            </td>
-                            <td class="sensitive-data {{ 'text-success' if stock.today_pnl_jpy > 0 else 'text-danger' if stock.today_pnl_jpy < 0 else '' }}">
-                                {{- '+' if stock.today_pnl_jpy >= 0 else '' }}¥{{ "{:,.0f}".format(stock.today_pnl_jpy) }}
-                            </td>
-                            <td>
-                                <canvas class="sparkline" 
-                                        data-sparkline-data="{{ stock.sparkline_data|tojson }}" 
-                                        width="100" height="30"></canvas>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        {% else %}
             <div class="text-center p-5">
                 <h4>No holdings calculated.</h4>
-                <p>Add your first trade to get started!</p>
+                <p>Add your first trade to get started.</p>
                 <a href="{{ url_for('add_trade') }}" class="btn btn-primary">Add Trade</a>
             </div>
         {% endif %}
@@ -260,28 +269,41 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-    // The 'stocks' variable is now pre-filtered by the server.
     const stocks = {{ stocks|tojson }};
     let historyData = {{ history_data|tojson }};
-    let pieChart = null; // To hold the chart instance
+    let pieChart = null;
     const chartLegendPosition = window.innerWidth < 768 ? 'bottom' : 'right';
 
-    // --- Form auto-submission ---
     const brokerFilter = document.getElementById('brokerFilter');
     const currencyFilter = document.getElementById('currencyFilter');
+    const accountNameFilter = document.getElementById('accountNameFilter');
+    const taxStatusFilter = document.getElementById('taxStatusFilter');
     const filterForm = document.getElementById('filterForm');
 
     function submitFilterForm() {
-        document.body.style.opacity = '0.5'; // Visual feedback that page is reloading
+        document.body.style.opacity = '0.5';
         filterForm.submit();
     }
 
-    if (brokerFilter && currencyFilter && filterForm) {
-        brokerFilter.addEventListener('change', submitFilterForm);
-        currencyFilter.addEventListener('change', submitFilterForm);
+    if (filterForm) {
+        [brokerFilter, currencyFilter, accountNameFilter, taxStatusFilter].forEach((filter) => {
+            if (filter) {
+                filter.addEventListener('change', submitFilterForm);
+            }
+        });
     }
 
-    // --- Pie Chart Rendering ---
+    document.querySelectorAll('.holding-detail-row .collapse').forEach((detail) => {
+        detail.addEventListener('show.bs.collapse', () => {
+            const row = document.querySelector(`[data-bs-target="#${detail.id}"]`);
+            if (row) row.classList.add('is-expanded');
+        });
+        detail.addEventListener('hide.bs.collapse', () => {
+            const row = document.querySelector(`[data-bs-target="#${detail.id}"]`);
+            if (row) row.classList.remove('is-expanded');
+        });
+    });
+
     function renderPieChart(stocksToRender) {
         const labels = stocksToRender.map(s => s.broker ? `${s.symbol} (${s.broker})` : s.symbol);
         const data = stocksToRender.map(s => s.current_value_jpy);
@@ -315,19 +337,17 @@ document.addEventListener('DOMContentLoaded', function () {
 
         const ctx = document.getElementById('portfolioPieChart').getContext('2d');
         if (pieChart) {
-            pieChart.destroy(); // Destroy old chart before creating new one
+            pieChart.destroy();
         }
 
         if (stocksToRender && stocksToRender.length > 0) {
             pieChart = new Chart(ctx, pieConfig);
         } else {
-            // If there are no stocks for the current filter, display a message.
             const parent = ctx.canvas.parentElement;
             parent.innerHTML = '<div class="text-center p-5 text-muted">No data to display for current filter.</div>';
         }
     }
     
-    // Initial render of the pie chart with the server-provided (filtered) stocks
     renderPieChart(stocks);
 
     function renderSparklines() {
@@ -336,31 +356,31 @@ document.addEventListener('DOMContentLoaded', function () {
             const data = JSON.parse(canvas.dataset.sparklineData);
             if (!data || data.length < 2) return;
 
-            const trendColor = data[data.length - 1] >= data[0] ? '#1cc88a' : '#e74a3b'; // success or danger color
+            const trendColor = data[data.length - 1] >= data[0] ? '#1cc88a' : '#e74a3b';
 
             new Chart(canvas, {
                 type: 'line',
                 data: {
-                    labels: Array(data.length).fill(''), // No labels
+                    labels: Array(data.length).fill(''),
                     datasets: [{
                         data: data,
                         borderColor: trendColor,
                         borderWidth: 2,
-                        pointRadius: 0, // No points
+                        pointRadius: 0,
                         fill: false,
                         tension: 0.4
                     }]
                 },
                 options: {
-                    responsive: false, // Use canvas width/height
+                    responsive: false,
                     maintainAspectRatio: false,
                     plugins: {
-                        legend: { display: false }, // No legend
-                        tooltip: { enabled: false } // No tooltips
+                        legend: { display: false },
+                        tooltip: { enabled: false }
                     },
                     scales: {
-                        x: { display: false }, // No x-axis
-                        y: { display: false }  // No y-axis
+                        x: { display: false },
+                        y: { display: false }
                     }
                 }
             });
@@ -370,7 +390,7 @@ document.addEventListener('DOMContentLoaded', function () {
     renderSparklines();
 
     function yenTick(value) {
-        return '¥' + new Intl.NumberFormat('ja-JP').format(value);
+        return '\u00a5' + new Intl.NumberFormat('ja-JP').format(value);
     }
 
     if (historyData && historyData.length > 0) {

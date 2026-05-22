@@ -26,6 +26,8 @@ body {
   border-bottom: 1px solid var(--app-border);
   backdrop-filter: blur(14px);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
+  position: relative;
+  z-index: 2000;
 }
 
 .navbar-brand {
@@ -52,6 +54,7 @@ body {
   border-radius: 8px;
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
   padding: 0.35rem;
+  z-index: 2100;
 }
 
 .dropdown-item {
@@ -271,6 +274,41 @@ h1 {
 
 .table-responsive {
   border-radius: 8px;
+}
+
+.holding-row {
+  cursor: pointer;
+}
+
+.holding-row-icon {
+  color: var(--app-muted);
+  transition: transform 0.18s ease;
+}
+
+.holding-row.is-expanded .holding-row-icon {
+  transform: rotate(90deg);
+}
+
+.holding-detail-row > td {
+  background: rgba(255, 255, 255, 0.018);
+  border-top: 0;
+}
+
+.holding-detail {
+  border-top: 1px solid var(--app-border);
+  padding: 1rem;
+}
+
+.detail-label {
+  color: var(--app-muted);
+  font-size: 0.74rem;
+  font-weight: 760;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.holding-trades-table {
+  background: rgba(255, 255, 255, 0.018);
 }
 
 .badge {

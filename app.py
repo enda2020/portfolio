@@ -52,7 +52,17 @@ if not APP_VERSION:
     except OSError:
         APP_VERSION = '0.0.0'
 LATEST_VERSION_URL = os.environ.get('APP_LATEST_VERSION_URL', DEFAULT_LATEST_VERSION_URL).strip()
-BROKERS = ['Monex', 'Interactive Brokers']
+CONFIG_OPTION_DEFAULTS = {
+    'broker': ['Monex', 'Interactive Brokers'],
+    'account_name': ['Default'],
+    'tax_status': ['Taxable', 'Non Taxable'],
+}
+CONFIG_OPTION_LABELS = {
+    'broker': 'Brokers',
+    'account_name': 'Account Names',
+    'tax_status': 'Tax Statuses',
+}
+BROKERS = CONFIG_OPTION_DEFAULTS['broker']
 ACCOUNT_TYPES = ['Specified', 'General', 'NISA', 'Taxable']
 TRADE_DETAILS = ['Standard', 'Reinvestment']
 MUTUAL_FUND_PRICE_UNITS = 10000
@@ -683,6 +693,8 @@ def _display_price_basis(value, instrument_type):
 def _normalize_stock_trade(trade):
     normalized = dict(trade)
     normalized['instrument_type'] = 'stock'
+    normalized['account_name'] = normalized.get('account_name') or 'Default'
+    normalized['tax_status'] = normalized.get('tax_status') or 'Taxable'
     return normalized
 
 def _normalize_mutual_fund_trade(trade):
@@ -697,6 +709,8 @@ def _normalize_mutual_fund_trade(trade):
         'currency': trade['currency'],
         'trade_date': trade['trade_date'],
         'broker': trade['broker'],
+        'account_name': _row_get(trade, 'account_name') or _row_get(trade, 'account_type') or 'Default',
+        'tax_status': _row_get(trade, 'tax_status') or 'Taxable',
         'fx_rate': trade['fx_rate'],
         'fee_amount': 0,
         'fee_currency': None,
@@ -715,6 +729,7 @@ def _fetch_normalized_trades(order='ASC'):
 
 def _parse_trade_form(form):
     """Validates trade form input and returns normalized values plus errors."""
+    config_options = get_config_options()
     errors = []
     values = {
         'symbol': form.get('symbol', '').strip().upper(),
@@ -725,12 +740,14 @@ def _parse_trade_form(form):
         'currency': form.get('currency', '').strip().upper(),
         'trade_date': form.get('trade_date', '').strip(),
         'broker': form.get('broker', '').strip(),
+        'account_name': form.get('account_name', '').strip(),
+        'tax_status': form.get('tax_status', '').strip(),
         'fx_rate': None,
         'fee_amount': None,
         'fee_currency': form.get('fee_currency', '').strip().upper() or None
     }
 
-    required_fields = ['symbol', 'name', 'trade_type', 'currency', 'trade_date', 'broker']
+    required_fields = ['symbol', 'name', 'trade_type', 'currency', 'trade_date', 'broker', 'account_name', 'tax_status']
     for field in required_fields:
         if not values[field]:
             errors.append(f"{field.replace('_', ' ').title()} is required.")
@@ -739,8 +756,12 @@ def _parse_trade_form(form):
         errors.append("Trade type must be BUY or SELL.")
     if values['currency'] and values['currency'] not in ['USD', 'JPY']:
         errors.append("Currency must be USD or JPY.")
-    if values['broker'] and values['broker'] not in BROKERS:
+    if values['broker'] and values['broker'] not in config_options['broker']:
         errors.append("Broker is not recognized.")
+    if values['account_name'] and values['account_name'] not in config_options['account_name']:
+        errors.append("Account name is not recognized.")
+    if values['tax_status'] and values['tax_status'] not in config_options['tax_status']:
+        errors.append("Tax status is not recognized.")
     if values['fee_currency'] and values['fee_currency'] not in ['USD', 'JPY']:
         errors.append("Fee currency must be USD or JPY.")
 
@@ -780,6 +801,7 @@ def _parse_trade_form(form):
     return values, errors
 
 def _parse_mutual_fund_trade_form(form):
+    config_options = get_config_options()
     errors = []
     values = {
         'fund_code': form.get('fund_code', '').strip().upper(),
@@ -787,6 +809,8 @@ def _parse_mutual_fund_trade_form(form):
         'transaction_type': form.get('transaction_type', '').strip().upper(),
         'transaction_detail': None,
         'account_type': None,
+        'account_name': form.get('account_name', '').strip(),
+        'tax_status': form.get('tax_status', '').strip(),
         'currency': 'JPY',
         'executed_units': None,
         'nav_per_10000': None,
@@ -797,15 +821,19 @@ def _parse_mutual_fund_trade_form(form):
         'fx_rate': None,
     }
 
-    required_fields = ['fund_code', 'fund_name', 'transaction_type', 'currency', 'trade_date', 'broker']
+    required_fields = ['fund_code', 'fund_name', 'transaction_type', 'currency', 'trade_date', 'broker', 'account_name', 'tax_status']
     for field in required_fields:
         if not values[field]:
             errors.append(f"{field.replace('_', ' ').title()} is required.")
 
     if values['transaction_type'] and values['transaction_type'] not in ['BUY', 'SELL']:
         errors.append("Transaction type must be BUY or SELL.")
-    if values['broker'] and values['broker'] not in BROKERS:
+    if values['broker'] and values['broker'] not in config_options['broker']:
         errors.append("Broker is not recognized.")
+    if values['account_name'] and values['account_name'] not in config_options['account_name']:
+        errors.append("Account name is not recognized.")
+    if values['tax_status'] and values['tax_status'] not in config_options['tax_status']:
+        errors.append("Tax status is not recognized.")
 
     try:
         values['executed_units'] = float(form.get('executed_units', ''))
@@ -895,6 +923,79 @@ def save_health_settings(settings):
             [(key, str(value)) for key, value in settings.items()]
         )
 
+def _seed_config_options(conn):
+    for category, values in CONFIG_OPTION_DEFAULTS.items():
+        for sort_order, value in enumerate(values):
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO config_options (category, value, sort_order)
+                VALUES (?, ?, ?)
+                """,
+                (category, value, sort_order)
+            )
+
+def get_config_options():
+    """Loads user-manageable dropdown values from the database."""
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        _seed_config_options(conn)
+        rows = conn.execute(
+            """
+            SELECT id, category, value, sort_order
+            FROM config_options
+            ORDER BY category, sort_order, value
+            """
+        ).fetchall()
+
+    options = {category: [] for category in CONFIG_OPTION_DEFAULTS}
+    option_rows = {category: [] for category in CONFIG_OPTION_DEFAULTS}
+    for row in rows:
+        category = row['category']
+        if category not in options:
+            continue
+        option = dict(row)
+        options[category].append(option['value'])
+        option_rows[category].append(option)
+
+    for category, defaults in CONFIG_OPTION_DEFAULTS.items():
+        if not options[category]:
+            options[category] = defaults[:]
+
+    options['_rows'] = option_rows
+    return options
+
+def _parse_config_option_form(form):
+    category = (form.get('category', '') or '').strip()
+    value = (form.get('value', '') or '').strip()
+    errors = []
+
+    if category not in CONFIG_OPTION_DEFAULTS:
+        errors.append("Configuration category is not recognized.")
+    if not value:
+        errors.append("Configuration value is required.")
+    if len(value) > 80:
+        errors.append("Configuration value must be 80 characters or fewer.")
+
+    return category, value, errors
+
+def _config_option_in_use(category, value):
+    if category == 'broker':
+        stock_column = 'broker'
+        fund_column = 'broker'
+    elif category == 'account_name':
+        stock_column = 'account_name'
+        fund_column = 'account_name'
+    elif category == 'tax_status':
+        stock_column = 'tax_status'
+        fund_column = 'tax_status'
+    else:
+        return False
+
+    with sqlite3.connect(DATABASE) as conn:
+        stock_count = conn.execute(f"SELECT COUNT(*) FROM trades WHERE {stock_column} = ?", (value,)).fetchone()[0]
+        fund_count = conn.execute(f"SELECT COUNT(*) FROM mutual_fund_trades WHERE {fund_column} = ?", (value,)).fetchone()[0]
+    return (stock_count + fund_count) > 0
+
 def get_app_settings():
     """Loads app-wide settings from the database, seeded from environment defaults."""
     with sqlite3.connect(DATABASE) as conn:
@@ -964,6 +1065,8 @@ def init_db():
                 currency TEXT NOT NULL,
                 trade_date TEXT NOT NULL,
                 broker TEXT,
+                account_name TEXT,
+                tax_status TEXT,
                 fx_rate REAL,
                 fee_amount REAL,
                 fee_currency TEXT
@@ -984,9 +1087,25 @@ def init_db():
                 settlement_date TEXT,
                 settlement_amount REAL,
                 broker TEXT,
+                account_name TEXT,
+                tax_status TEXT,
                 fx_rate REAL
             )
         ''')
+        trade_columns = [row[1] for row in conn.execute("PRAGMA table_info(trades)").fetchall()]
+        if 'account_name' not in trade_columns:
+            conn.execute("ALTER TABLE trades ADD COLUMN account_name TEXT")
+        if 'tax_status' not in trade_columns:
+            conn.execute("ALTER TABLE trades ADD COLUMN tax_status TEXT")
+        fund_columns = [row[1] for row in conn.execute("PRAGMA table_info(mutual_fund_trades)").fetchall()]
+        if 'account_name' not in fund_columns:
+            conn.execute("ALTER TABLE mutual_fund_trades ADD COLUMN account_name TEXT")
+        if 'tax_status' not in fund_columns:
+            conn.execute("ALTER TABLE mutual_fund_trades ADD COLUMN tax_status TEXT")
+        conn.execute("UPDATE trades SET account_name = 'Default' WHERE account_name IS NULL OR account_name = ''")
+        conn.execute("UPDATE trades SET tax_status = 'Taxable' WHERE tax_status IS NULL OR tax_status = ''")
+        conn.execute("UPDATE mutual_fund_trades SET account_name = COALESCE(NULLIF(account_name, ''), NULLIF(account_type, ''), 'Default')")
+        conn.execute("UPDATE mutual_fund_trades SET tax_status = CASE WHEN tax_status IS NULL OR tax_status = '' THEN CASE WHEN account_type = 'NISA' THEN 'Non Taxable' ELSE 'Taxable' END ELSE tax_status END")
         conn.execute('''
             CREATE TABLE IF NOT EXISTS portfolio_history (
                 date TEXT PRIMARY KEY,
@@ -1021,9 +1140,25 @@ def init_db():
             "INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)",
             [(key, str(value)) for key, value in APP_SETTING_DEFAULTS.items()]
         )
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS config_options (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL,
+                value TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(category, value)
+            )
+        ''')
+        _seed_config_options(conn)
+        conn.execute("INSERT OR IGNORE INTO config_options (category, value, sort_order) SELECT 'broker', broker, 100 FROM trades WHERE broker IS NOT NULL AND broker != ''")
+        conn.execute("INSERT OR IGNORE INTO config_options (category, value, sort_order) SELECT 'broker', broker, 100 FROM mutual_fund_trades WHERE broker IS NOT NULL AND broker != ''")
+        conn.execute("INSERT OR IGNORE INTO config_options (category, value, sort_order) SELECT 'account_name', account_name, 100 FROM trades WHERE account_name IS NOT NULL AND account_name != ''")
+        conn.execute("INSERT OR IGNORE INTO config_options (category, value, sort_order) SELECT 'account_name', account_name, 100 FROM mutual_fund_trades WHERE account_name IS NOT NULL AND account_name != ''")
+        conn.execute("INSERT OR IGNORE INTO config_options (category, value, sort_order) SELECT 'tax_status', tax_status, 100 FROM trades WHERE tax_status IS NOT NULL AND tax_status != ''")
+        conn.execute("INSERT OR IGNORE INTO config_options (category, value, sort_order) SELECT 'tax_status', tax_status, 100 FROM mutual_fund_trades WHERE tax_status IS NOT NULL AND tax_status != ''")
     print("Database tables ensured to exist.")
 
-def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, currency_filter=None):
+def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, currency_filter=None, account_name_filter=None, tax_status_filter=None):
     """
     Helper function to perform the main portfolio calculation.
     This is refactored out of the index() route for reuse.
@@ -1038,11 +1173,15 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
     for trade in trades:
         # Aggregate by both symbol and broker for more granular tracking
         instrument_type = trade['instrument_type'] if 'instrument_type' in trade.keys() else 'stock'
-        key = (trade['symbol'], trade['broker'], instrument_type)
+        account_name = trade.get('account_name') or 'Default'
+        tax_status = trade.get('tax_status') or 'Taxable'
+        key = (trade['symbol'], trade['broker'], account_name, tax_status, instrument_type)
         if key not in holdings:
             holdings[key] = {
                 'symbol': trade['symbol'],
                 'broker': trade['broker'],
+                'account_name': account_name,
+                'tax_status': tax_status,
                 'instrument_type': instrument_type,
                 'name': trade['name'],
                 'currency': trade['currency'],
@@ -1050,11 +1189,28 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
                 'total_cost': 0,
                 'realized_pnl_native': 0,
                 'today_buy_quantity': 0,
-                'today_buy_cost': 0
+                'today_buy_cost': 0,
+                'trade_history': []
             }
+
+        fee_amount = trade['fee_amount'] or 0.0
+        holdings[key]['trade_history'].append({
+            'trade_date': trade['trade_date'],
+            'trade_type': trade['trade_type'],
+            'quantity': trade['quantity'],
+            'price': trade['price'],
+            'price_display': trade['price'],
+            'currency': trade['currency'],
+            'broker': trade['broker'],
+            'account_name': account_name,
+            'tax_status': tax_status,
+            'fee_amount': fee_amount,
+            'fee_currency': trade['fee_currency'],
+            'fx_rate': trade['fx_rate'],
+            'instrument_type': instrument_type
+        })
         
         # Fee calculation
-        fee_amount = trade['fee_amount'] or 0.0
         fee_currency = trade['fee_currency']
         trade_currency = trade['currency']
 
@@ -1098,6 +1254,10 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
             continue
         if currency_filter and data['currency'] != currency_filter:
             continue
+        if account_name_filter and data['account_name'] != account_name_filter:
+            continue
+        if tax_status_filter and data['tax_status'] != tax_status_filter:
+            continue
 
         realized_pnl_native = data['realized_pnl_native']
         if data['currency'] == 'JPY' and exchange_rate > 0:
@@ -1114,6 +1274,10 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
                 'symbol': data['symbol'],
                 'broker': data['broker'],
                 'brokers': [data['broker']],
+                'account_name': data['account_name'],
+                'account_names': [data['account_name']],
+                'tax_status': data['tax_status'],
+                'tax_statuses': [data['tax_status']],
                 'instrument_type': data['instrument_type'],
                 'name': data['name'],
                 'currency': data['currency'],
@@ -1121,14 +1285,20 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
                 'total_cost': 0,
                 'today_buy_quantity': 0,
                 'today_buy_cost': 0,
+                'trade_history': [],
             }
         elif data['broker'] not in combined_holdings[combined_key]['brokers']:
             combined_holdings[combined_key]['brokers'].append(data['broker'])
+        if data['account_name'] not in combined_holdings[combined_key]['account_names']:
+            combined_holdings[combined_key]['account_names'].append(data['account_name'])
+        if data['tax_status'] not in combined_holdings[combined_key]['tax_statuses']:
+            combined_holdings[combined_key]['tax_statuses'].append(data['tax_status'])
 
         combined_holdings[combined_key]['quantity'] += data['quantity']
         combined_holdings[combined_key]['total_cost'] += data['total_cost']
         combined_holdings[combined_key]['today_buy_quantity'] += data['today_buy_quantity']
         combined_holdings[combined_key]['today_buy_cost'] += data['today_buy_cost']
+        combined_holdings[combined_key]['trade_history'].extend(data['trade_history'])
 
     # --- Enrichment and Summary ---
     total_portfolio_value_usd = 0.0
@@ -1139,6 +1309,9 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
 
     for data in combined_holdings.values():
         data['broker'] = ', '.join(data['brokers'])
+        data['account_name'] = ', '.join(data['account_names'])
+        data['tax_status'] = ', '.join(data['tax_statuses'])
+        data['trade_history'] = sorted(data['trade_history'], key=lambda trade: trade['trade_date'], reverse=True)
 
         # Calculate average cost basis
         if data['quantity'] > 0:
@@ -1451,10 +1624,14 @@ def index():
     # 1. Get filters and raw data
     broker_filter = request.args.get('broker', 'all')
     currency_filter = request.args.get('currency', 'all')
+    account_name_filter = request.args.get('account_name', 'all')
+    tax_status_filter = request.args.get('tax_status', 'all')
 
     # Convert 'all' to None for the calculation function, which expects None for no filter
     effective_broker_filter = broker_filter if broker_filter != 'all' else None
     effective_currency_filter = currency_filter if currency_filter != 'all' else None
+    effective_account_name_filter = account_name_filter if account_name_filter != 'all' else None
+    effective_tax_status_filter = tax_status_filter if tax_status_filter != 'all' else None
 
     exchange_data = get_exchange_rate()
     market_data_reliable = exchange_data is not None
@@ -1469,14 +1646,21 @@ def index():
     trades = _fetch_normalized_trades()
 
     # 2. Perform the main calculation with filters for display. This is the single source of truth.
-    summary = _calculate_portfolio_summary(trades, exchange_rate, effective_broker_filter, effective_currency_filter)
+    summary = _calculate_portfolio_summary(
+        trades,
+        exchange_rate,
+        effective_broker_filter,
+        effective_currency_filter,
+        effective_account_name_filter,
+        effective_tax_status_filter
+    )
     has_live_data_issue = (not market_data_reliable) or (not summary['market_data_complete'])
     if has_live_data_issue:
         flash('Live market data is temporarily unavailable. Showing cost-basis fallback values and skipping today\'s history snapshot.', 'info')
 
     # 3. Ensure history is up-to-date with the TOTAL portfolio value.
     # If filters are active, we must re-calculate the summary without them for the history.
-    if effective_broker_filter or effective_currency_filter:
+    if effective_broker_filter or effective_currency_filter or effective_account_name_filter or effective_tax_status_filter:
         total_summary = _calculate_portfolio_summary(trades, exchange_rate)
         if market_data_reliable and total_summary['market_data_complete']:
             _ensure_history_updated(total_summary)
@@ -1495,6 +1679,7 @@ def index():
 
     # 5. Render the page
     prices_last_updated = _portfolio_now().strftime('%Y-%m-%d %H:%M')
+    config_options = get_config_options()
     return render_template('index.html', 
                            **summary, 
                            exchange_rate=exchange_rate, 
@@ -1503,9 +1688,13 @@ def index():
                            fx_latest_data_at=fx_latest_data_at,
                            fx_latest_data_ago=fx_latest_data_ago,
                            history_data=history_data, 
-                           brokers=BROKERS,
+                           brokers=config_options['broker'],
+                           account_names=config_options['account_name'],
+                           tax_statuses=config_options['tax_status'],
                            selected_broker=broker_filter,
-                           selected_currency=currency_filter)
+                           selected_currency=currency_filter,
+                           selected_account_name=account_name_filter,
+                           selected_tax_status=tax_status_filter)
 
 @app.route('/health')
 def portfolio_health():
@@ -1570,22 +1759,89 @@ def health_settings():
 def app_config():
     """Lets the user edit app-wide configuration."""
     settings = get_app_settings()
+    config_options = get_config_options()
 
     if request.method == 'POST':
         _validate_csrf_token()
-        settings, errors = _parse_app_settings_form(request.form)
-        if errors:
-            for error in errors:
-                flash(error, 'danger')
-        else:
-            save_app_settings(settings)
-            flash('Configuration saved.', 'success')
+        action = request.form.get('action', 'save_settings')
+
+        if action == 'save_settings':
+            settings, errors = _parse_app_settings_form(request.form)
+            if errors:
+                for error in errors:
+                    flash(error, 'danger')
+            else:
+                save_app_settings(settings)
+                flash('Configuration saved.', 'success')
+                return redirect(url_for('app_config'))
+        elif action == 'add_option':
+            category, value, errors = _parse_config_option_form(request.form)
+            if errors:
+                for error in errors:
+                    flash(error, 'danger')
+            else:
+                try:
+                    with sqlite3.connect(DATABASE) as conn:
+                        max_sort = conn.execute(
+                            "SELECT COALESCE(MAX(sort_order), -1) FROM config_options WHERE category = ?",
+                            (category,)
+                        ).fetchone()[0]
+                        conn.execute(
+                            "INSERT INTO config_options (category, value, sort_order) VALUES (?, ?, ?)",
+                            (category, value, max_sort + 1)
+                        )
+                    flash('Configuration value added.', 'success')
+                except sqlite3.IntegrityError:
+                    flash('That configuration value already exists.', 'warning')
+                return redirect(url_for('app_config'))
+        elif action == 'update_option':
+            option_id = request.form.get('option_id')
+            category, value, errors = _parse_config_option_form(request.form)
+            if errors:
+                for error in errors:
+                    flash(error, 'danger')
+            else:
+                with sqlite3.connect(DATABASE) as conn:
+                    conn.row_factory = sqlite3.Row
+                    option = conn.execute("SELECT * FROM config_options WHERE id = ?", (option_id,)).fetchone()
+                    if option is None:
+                        abort(404)
+                    if option['category'] != category:
+                        abort(400)
+                    if option['value'] != value and _config_option_in_use(category, option['value']):
+                        flash('Cannot rename a value while trades are using it. Add the new value, update those trades, then delete the old value.', 'warning')
+                    else:
+                        try:
+                            conn.execute("UPDATE config_options SET value = ? WHERE id = ?", (value, option_id))
+                            flash('Configuration value updated.', 'success')
+                        except sqlite3.IntegrityError:
+                            flash('That configuration value already exists.', 'warning')
+                return redirect(url_for('app_config'))
+        elif action == 'delete_option':
+            option_id = request.form.get('option_id')
+            with sqlite3.connect(DATABASE) as conn:
+                conn.row_factory = sqlite3.Row
+                option = conn.execute("SELECT * FROM config_options WHERE id = ?", (option_id,)).fetchone()
+                if option is None:
+                    abort(404)
+                count = conn.execute("SELECT COUNT(*) FROM config_options WHERE category = ?", (option['category'],)).fetchone()[0]
+                if count <= 1:
+                    flash('Each category must keep at least one value.', 'warning')
+                elif _config_option_in_use(option['category'], option['value']):
+                    flash('Cannot delete a configuration value that is used by trades.', 'warning')
+                else:
+                    conn.execute("DELETE FROM config_options WHERE id = ?", (option_id,))
+                    flash('Configuration value deleted.', 'success')
             return redirect(url_for('app_config'))
+        else:
+            abort(400)
 
     return render_template(
         'config.html',
         settings=settings,
-        labels=APP_SETTING_LABELS
+        labels=APP_SETTING_LABELS,
+        config_option_labels=CONFIG_OPTION_LABELS,
+        config_option_rows=config_options['_rows']
     )
 
 @app.route('/api/portfolio')
@@ -1597,10 +1853,14 @@ def api_portfolio():
     # 1. Get filters and raw data
     broker_filter = request.args.get('broker', 'all')
     currency_filter = request.args.get('currency', 'all')
+    account_name_filter = request.args.get('account_name', 'all')
+    tax_status_filter = request.args.get('tax_status', 'all')
 
     # Convert 'all' to None for the calculation function, which expects None for no filter
     effective_broker_filter = broker_filter if broker_filter != 'all' else None
     effective_currency_filter = currency_filter if currency_filter != 'all' else None
+    effective_account_name_filter = account_name_filter if account_name_filter != 'all' else None
+    effective_tax_status_filter = tax_status_filter if tax_status_filter != 'all' else None
 
     exchange_data = get_exchange_rate()
     if exchange_data is None:
@@ -1610,7 +1870,14 @@ def api_portfolio():
     trades = _fetch_normalized_trades()
 
     # 2. Perform the main calculation with filters.
-    summary = _calculate_portfolio_summary(trades, exchange_rate, effective_broker_filter, effective_currency_filter)
+    summary = _calculate_portfolio_summary(
+        trades,
+        exchange_rate,
+        effective_broker_filter,
+        effective_currency_filter,
+        effective_account_name_filter,
+        effective_tax_status_filter
+    )
     
     # 3. Return as JSON
     return jsonify(summary)
@@ -1619,12 +1886,18 @@ def api_portfolio():
 def api_version():
     return jsonify(get_app_version_status())
 
-def generate_tax_report_data(year):
+def generate_tax_report_data(year, broker_filter=None, account_name_filter=None, tax_status_filter=None):
     """
     Generates a tax report for a given year using the moving-average cost basis method.
     All calculations are performed in JPY.
     """
     trades = _fetch_normalized_trades()
+    if broker_filter:
+        trades = [trade for trade in trades if trade.get('broker') == broker_filter]
+    if account_name_filter:
+        trades = [trade for trade in trades if trade.get('account_name') == account_name_filter]
+    if tax_status_filter:
+        trades = [trade for trade in trades if trade.get('tax_status') == tax_status_filter]
 
     holdings = {}  # Tracks the moving-average cost for each stock
     buy_history = {} # Tracks all buy transactions for the breakdown
@@ -1632,16 +1905,23 @@ def generate_tax_report_data(year):
 
     for trade in trades:
         symbol = trade['symbol']
+        holding_key = (
+            trade['symbol'],
+            trade['broker'],
+            trade.get('account_name') or 'Default',
+            trade.get('tax_status') or 'Taxable',
+            trade['instrument_type']
+        )
         trade_year = int(trade['trade_date'][:4])
 
-        if symbol not in holdings:
-            holdings[symbol] = {
+        if holding_key not in holdings:
+            holdings[holding_key] = {
                 'quantity': 0, 
                 'total_cost_jpy': 0,
                 'total_cost_native': 0,
                 'last_purchase_date': None
             }
-            buy_history[symbol] = []
+            buy_history[holding_key] = []
 
         # --- Cost Calculation (for BUYs) ---
         if trade['trade_type'] == 'BUY':
@@ -1675,12 +1955,12 @@ def generate_tax_report_data(year):
             # Calculate cost of the buy transaction in native currency
             cost_native = _trade_gross_value(trade) + fee_native
 
-            holdings[symbol]['quantity'] += trade['quantity']
-            holdings[symbol]['total_cost_jpy'] += cost_jpy
-            holdings[symbol]['total_cost_native'] += cost_native
-            holdings[symbol]['last_purchase_date'] = trade['trade_date']
+            holdings[holding_key]['quantity'] += trade['quantity']
+            holdings[holding_key]['total_cost_jpy'] += cost_jpy
+            holdings[holding_key]['total_cost_native'] += cost_native
+            holdings[holding_key]['last_purchase_date'] = trade['trade_date']
 
-            buy_history[symbol].append({
+            buy_history[holding_key].append({
                 'date': trade['trade_date'],
                 'quantity': trade['quantity'],
                 'price_native': trade['price'],
@@ -1692,7 +1972,7 @@ def generate_tax_report_data(year):
 
         # --- P&L Calculation (for all SELLs, reported only for the selected year) ---
         elif trade['trade_type'] == 'SELL':
-            current_holding = holdings[symbol]
+            current_holding = holdings[holding_key]
             avg_cost_jpy = 0
             if current_holding['quantity'] > 0:
                 avg_cost_jpy = current_holding['total_cost_jpy'] / current_holding['quantity']
@@ -1725,29 +2005,34 @@ def generate_tax_report_data(year):
                     'trade_date': trade['trade_date'], 'quantity': trade['quantity'], 
                     'proceeds_jpy': proceeds_jpy, 'cost_basis_jpy': cost_of_sale_jpy, 
                     'pnl_jpy': pnl_jpy, 'broker': trade['broker'],
+                    'account_name': trade.get('account_name') or 'Default',
+                    'tax_status': trade.get('tax_status') or 'Taxable',
                     'selling_fee_jpy': fee_jpy,
-                    'last_purchase_date': holdings[symbol]['last_purchase_date'],
+                    'last_purchase_date': holdings[holding_key]['last_purchase_date'],
                     # --- Additions for breakdown ---
                     'avg_cost_per_share_jpy': _display_price_basis(avg_cost_jpy, trade['instrument_type']),
                     'avg_cost_per_share_native': _display_price_basis(avg_cost_native, trade['instrument_type']),
                     'sale_price_native': trade['price'],
                     'sale_currency': trade['currency'],
                     'sale_fx_rate': trade['fx_rate'],
-                    'acquisition_history': list(buy_history[symbol])
+                    'acquisition_history': list(buy_history[holding_key])
                 })
 
             # Update holdings after the sale
-            holdings[symbol]['quantity'] -= trade['quantity']
-            holdings[symbol]['total_cost_jpy'] -= cost_of_sale_jpy
+            holdings[holding_key]['quantity'] -= trade['quantity']
+            holdings[holding_key]['total_cost_jpy'] -= cost_of_sale_jpy
             cost_of_sale_native = trade['quantity'] * avg_cost_native
-            holdings[symbol]['total_cost_native'] -= cost_of_sale_native
+            holdings[holding_key]['total_cost_native'] -= cost_of_sale_native
 
     return {
         'sales': sales_report,
         'total_proceeds_jpy': sum(s['proceeds_jpy'] for s in sales_report),
         'total_cost_basis_jpy': sum(s['cost_basis_jpy'] for s in sales_report),
         'total_pnl_jpy': sum(s['pnl_jpy'] for s in sales_report),
-        'year': year
+        'year': year,
+        'selected_broker': broker_filter or 'all',
+        'selected_account_name': account_name_filter or 'all',
+        'selected_tax_status': tax_status_filter or 'all'
     }
 
 @app.route('/trades')
@@ -1777,6 +2062,7 @@ def list_trades():
 @app.route('/tax_report', methods=['GET', 'POST'])
 def tax_report():
     """Handles the tax report generation."""
+    config_options = get_config_options()
     with sqlite3.connect(DATABASE) as conn:
         # Get distinct years from trades to populate the dropdown
         years_cursor = conn.execute(
@@ -1794,26 +2080,49 @@ def tax_report():
     if request.method == 'POST':
         _validate_csrf_token()
         selected_year = request.form.get('year')
+        selected_broker = request.form.get('broker', 'all')
+        selected_account_name = request.form.get('account_name', 'all')
+        selected_tax_status = request.form.get('tax_status', 'all')
         if selected_year:
-            report_data = generate_tax_report_data(int(selected_year))
+            report_data = generate_tax_report_data(
+                int(selected_year),
+                selected_broker if selected_broker != 'all' else None,
+                selected_account_name if selected_account_name != 'all' else None,
+                selected_tax_status if selected_tax_status != 'all' else None
+            )
     
-    return render_template('tax_report.html', years=available_years, report_data=report_data)
+    return render_template(
+        'tax_report.html',
+        years=available_years,
+        report_data=report_data,
+        brokers=config_options['broker'],
+        account_names=config_options['account_name'],
+        tax_statuses=config_options['tax_status']
+    )
 
 
 @app.route('/add_trade', methods=['GET', 'POST'])
 def add_trade():
     """Handles adding a new trade."""
+    config_options = get_config_options()
     if request.method == 'POST':
         _validate_csrf_token()
         values, errors = _parse_trade_form(request.form)
         if errors:
             for error in errors:
                 flash(error, 'danger')
-            return render_template('add_trade.html', today=values.get('trade_date') or _portfolio_day_str(), values=values, brokers=BROKERS)
+            return render_template(
+                'add_trade.html',
+                today=values.get('trade_date') or _portfolio_day_str(),
+                values=values,
+                brokers=config_options['broker'],
+                account_names=config_options['account_name'],
+                tax_statuses=config_options['tax_status']
+            )
 
         with sqlite3.connect(DATABASE) as conn:
             conn.execute(
-                'INSERT INTO trades (symbol, name, trade_type, quantity, price, currency, trade_date, broker, fx_rate, fee_amount, fee_currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                'INSERT INTO trades (symbol, name, trade_type, quantity, price, currency, trade_date, broker, account_name, tax_status, fx_rate, fee_amount, fee_currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 (
                     values['symbol'],
                     values['name'],
@@ -1823,13 +2132,22 @@ def add_trade():
                     values['currency'],
                     values['trade_date'],
                     values['broker'],
+                    values['account_name'],
+                    values['tax_status'],
                     values['fx_rate'],
                     values['fee_amount'],
                     values['fee_currency']
                 )
             )
         return redirect(url_for('list_trades'))
-    return render_template('add_trade.html', today=_portfolio_day_str(), values={}, brokers=BROKERS)
+    return render_template(
+        'add_trade.html',
+        today=_portfolio_day_str(),
+        values={},
+        brokers=config_options['broker'],
+        account_names=config_options['account_name'],
+        tax_statuses=config_options['tax_status']
+    )
 
 @app.route('/mutual_funds')
 def list_mutual_fund_trades():
@@ -1842,6 +2160,7 @@ def list_mutual_fund_trades():
 @app.route('/add_mutual_fund_trade', methods=['GET', 'POST'])
 def add_mutual_fund_trade():
     """Handles adding a Japanese mutual fund transaction."""
+    config_options = get_config_options()
     if request.method == 'POST':
         _validate_csrf_token()
         values, errors = _parse_mutual_fund_trade_form(request.form)
@@ -1852,7 +2171,9 @@ def add_mutual_fund_trade():
                 'add_mutual_fund_trade.html',
                 today=values.get('trade_date') or _portfolio_day_str(),
                 values=values,
-                brokers=BROKERS
+                brokers=config_options['broker'],
+                account_names=config_options['account_name'],
+                tax_statuses=config_options['tax_status']
             )
 
         with sqlite3.connect(DATABASE) as conn:
@@ -1860,9 +2181,9 @@ def add_mutual_fund_trade():
                 """
                 INSERT INTO mutual_fund_trades (
                     fund_code, fund_name, transaction_type, transaction_detail,
-                    account_type, currency, executed_units, nav_per_10000,
+                    account_type, account_name, tax_status, currency, executed_units, nav_per_10000,
                     trade_date, settlement_date, settlement_amount, broker, fx_rate
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     values['fund_code'],
@@ -1870,6 +2191,8 @@ def add_mutual_fund_trade():
                     values['transaction_type'],
                     values['transaction_detail'],
                     values['account_type'],
+                    values['account_name'],
+                    values['tax_status'],
                     values['currency'],
                     values['executed_units'],
                     values['nav_per_10000'],
@@ -1886,12 +2209,99 @@ def add_mutual_fund_trade():
         'add_mutual_fund_trade.html',
         today=_portfolio_day_str(),
         values={},
-        brokers=BROKERS
+        brokers=config_options['broker'],
+        account_names=config_options['account_name'],
+        tax_statuses=config_options['tax_status']
+    )
+
+@app.route('/edit_mutual_fund_trade/<int:trade_id>', methods=['GET', 'POST'])
+def edit_mutual_fund_trade(trade_id):
+    """Handles editing an existing mutual fund transaction."""
+    config_options = get_config_options()
+    if request.method == 'POST':
+        _validate_csrf_token()
+        values, errors = _parse_mutual_fund_trade_form(request.form)
+        if errors:
+            for error in errors:
+                flash(error, 'danger')
+            return render_template(
+                'edit_mutual_fund_trade.html',
+                trade_id=trade_id,
+                today=values.get('trade_date') or _portfolio_day_str(),
+                values=values,
+                brokers=config_options['broker'],
+                account_names=config_options['account_name'],
+                tax_statuses=config_options['tax_status']
+            )
+
+        with sqlite3.connect(DATABASE) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE mutual_fund_trades
+                SET fund_code = ?,
+                    fund_name = ?,
+                    transaction_type = ?,
+                    transaction_detail = ?,
+                    account_type = ?,
+                    account_name = ?,
+                    tax_status = ?,
+                    currency = ?,
+                    executed_units = ?,
+                    nav_per_10000 = ?,
+                    trade_date = ?,
+                    settlement_date = ?,
+                    settlement_amount = ?,
+                    broker = ?,
+                    fx_rate = ?
+                WHERE id = ?
+                """,
+                (
+                    values['fund_code'],
+                    values['fund_name'],
+                    values['transaction_type'],
+                    values['transaction_detail'],
+                    values['account_type'],
+                    values['account_name'],
+                    values['tax_status'],
+                    values['currency'],
+                    values['executed_units'],
+                    values['nav_per_10000'],
+                    values['trade_date'],
+                    values['settlement_date'],
+                    values['settlement_amount'],
+                    values['broker'],
+                    values['fx_rate'],
+                    trade_id
+                )
+            )
+            if cursor.rowcount == 0:
+                abort(404)
+        flash('Mutual fund transaction updated.', 'success')
+        return redirect(url_for('list_mutual_fund_trades'))
+
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        trade = conn.execute('SELECT * FROM mutual_fund_trades WHERE id = ?', (trade_id,)).fetchone()
+    if trade is None:
+        abort(404)
+
+    values = dict(trade)
+    values['account_name'] = values.get('account_name') or values.get('account_type') or 'Default'
+    values['tax_status'] = values.get('tax_status') or 'Taxable'
+    return render_template(
+        'edit_mutual_fund_trade.html',
+        trade_id=trade_id,
+        today=values.get('trade_date') or _portfolio_day_str(),
+        values=values,
+        brokers=config_options['broker'],
+        account_names=config_options['account_name'],
+        tax_statuses=config_options['tax_status']
     )
 
 @app.route('/edit_trade/<int:trade_id>', methods=['GET', 'POST'])
 def edit_trade(trade_id):
     """Handles editing an existing trade."""
+    config_options = get_config_options()
     if request.method == 'POST':
         _validate_csrf_token()
         values, errors = _parse_trade_form(request.form)
@@ -1903,11 +2313,17 @@ def edit_trade(trade_id):
                 trade = conn.execute('SELECT * FROM trades WHERE id = ?', (trade_id,)).fetchone()
             if trade is None:
                 abort(404)
-            return render_template('edit_trade.html', trade=trade, brokers=BROKERS)
+            return render_template(
+                'edit_trade.html',
+                trade=trade,
+                brokers=config_options['broker'],
+                account_names=config_options['account_name'],
+                tax_statuses=config_options['tax_status']
+            )
 
         with sqlite3.connect(DATABASE) as conn:
             conn.execute(
-                'UPDATE trades SET symbol=?, name=?, trade_type=?, quantity=?, price=?, currency=?, trade_date=?, broker=?, fx_rate=?, fee_amount=?, fee_currency=? WHERE id=?',
+                'UPDATE trades SET symbol=?, name=?, trade_type=?, quantity=?, price=?, currency=?, trade_date=?, broker=?, account_name=?, tax_status=?, fx_rate=?, fee_amount=?, fee_currency=? WHERE id=?',
                 (
                     values['symbol'],
                     values['name'],
@@ -1917,6 +2333,8 @@ def edit_trade(trade_id):
                     values['currency'],
                     values['trade_date'],
                     values['broker'],
+                    values['account_name'],
+                    values['tax_status'],
                     values['fx_rate'],
                     values['fee_amount'],
                     values['fee_currency'],
@@ -1931,7 +2349,13 @@ def edit_trade(trade_id):
         trade = conn.execute('SELECT * FROM trades WHERE id = ?', (trade_id,)).fetchone()
     if trade is None:
         abort(404)
-    return render_template('edit_trade.html', trade=trade, brokers=BROKERS)
+    return render_template(
+        'edit_trade.html',
+        trade=trade,
+        brokers=config_options['broker'],
+        account_names=config_options['account_name'],
+        tax_statuses=config_options['tax_status']
+    )
 
 @app.route('/delete_mutual_fund_trade/<int:trade_id>', methods=['POST'])
 def delete_mutual_fund_trade(trade_id):
@@ -1942,6 +2366,32 @@ def delete_mutual_fund_trade(trade_id):
     flash('Mutual fund transaction deleted.', 'success')
     return redirect(url_for('list_mutual_fund_trades'))
 
+@app.route('/clone_mutual_fund_trade/<int:trade_id>', methods=['POST'])
+def clone_mutual_fund_trade(trade_id):
+    """Duplicates a mutual fund transaction."""
+    _validate_csrf_token()
+    with sqlite3.connect(DATABASE) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO mutual_fund_trades (
+                fund_code, fund_name, transaction_type, transaction_detail,
+                account_type, account_name, tax_status, currency, executed_units, nav_per_10000,
+                trade_date, settlement_date, settlement_amount, broker, fx_rate
+            )
+            SELECT
+                fund_code, fund_name, transaction_type, transaction_detail,
+                account_type, account_name, tax_status, currency, executed_units, nav_per_10000,
+                trade_date, settlement_date, settlement_amount, broker, fx_rate
+            FROM mutual_fund_trades
+            WHERE id = ?
+            """,
+            (trade_id,)
+        )
+        if cursor.rowcount == 0:
+            abort(404)
+    flash('Mutual fund transaction cloned.', 'success')
+    return redirect(url_for('list_mutual_fund_trades'))
+
 @app.route('/delete_trade/<int:trade_id>', methods=['POST'])
 def delete_trade(trade_id):
     """Deletes a trade from the database."""
@@ -1949,6 +2399,30 @@ def delete_trade(trade_id):
     with sqlite3.connect(DATABASE) as conn:
         conn.execute('DELETE FROM trades WHERE id = ?', (trade_id,))
     flash('Trade deleted.', 'success')
+    return redirect(url_for('list_trades'))
+
+@app.route('/clone_trade/<int:trade_id>', methods=['POST'])
+def clone_trade(trade_id):
+    """Duplicates a stock / ETF trade."""
+    _validate_csrf_token()
+    with sqlite3.connect(DATABASE) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO trades (
+                symbol, name, trade_type, quantity, price, currency, trade_date,
+                broker, account_name, tax_status, fx_rate, fee_amount, fee_currency
+            )
+            SELECT
+                symbol, name, trade_type, quantity, price, currency, trade_date,
+                broker, account_name, tax_status, fx_rate, fee_amount, fee_currency
+            FROM trades
+            WHERE id = ?
+            """,
+            (trade_id,)
+        )
+        if cursor.rowcount == 0:
+            abort(404)
+    flash('Trade cloned.', 'success')
     return redirect(url_for('list_trades'))
 
 @app.route('/export_trades')
@@ -1961,7 +2435,7 @@ def export_trades():
 
         # Use an in-memory string buffer to build the CSV
         output = io.StringIO()
-        fieldnames = ['symbol', 'name', 'trade_type', 'quantity', 'price', 'currency', 'trade_date', 'broker', 'fx_rate', 'fee_amount', 'fee_currency']
+        fieldnames = ['symbol', 'name', 'trade_type', 'quantity', 'price', 'currency', 'trade_date', 'broker', 'account_name', 'tax_status', 'fx_rate', 'fee_amount', 'fee_currency']
         writer = csv.DictWriter(output, fieldnames=fieldnames)
 
         writer.writeheader()
@@ -1983,6 +2457,7 @@ def export_trades():
 def bulk_upload():
     if request.method == 'POST':
         _validate_csrf_token()
+        config_options = get_config_options()
         if 'file' not in request.files:
             flash('No file part in the request.', 'danger')
             return redirect(request.url)
@@ -2019,6 +2494,18 @@ def bulk_upload():
                         if currency not in ['USD', 'JPY']:
                             errors.append(f"Row {row_num}: Invalid currency '{row['currency']}'. Must be 'USD' or 'JPY'.")
                             continue
+                        broker = row['broker'].strip()
+                        if broker not in config_options['broker']:
+                            errors.append(f"Row {row_num}: Broker '{broker}' is not configured.")
+                            continue
+                        account_name = row.get('account_name', '').strip() or config_options['account_name'][0]
+                        if account_name not in config_options['account_name']:
+                            errors.append(f"Row {row_num}: Account name '{account_name}' is not configured.")
+                            continue
+                        tax_status = row.get('tax_status', '').strip() or config_options['tax_status'][0]
+                        if tax_status not in config_options['tax_status']:
+                            errors.append(f"Row {row_num}: Tax status '{tax_status}' is not configured.")
+                            continue
                         
                         quantity = float(row['quantity'])
                         price = float(row['price'])
@@ -2034,7 +2521,8 @@ def bulk_upload():
                         trades_to_add.append({
                             'symbol': row['symbol'].strip().upper(), 'name': row['name'], 'trade_type': trade_type,
                             'quantity': quantity, 'price': price, 'currency': currency, 
-                            'trade_date': row['trade_date'], 'broker': row['broker'],
+                            'trade_date': row['trade_date'], 'broker': broker,
+                            'account_name': account_name, 'tax_status': tax_status,
                             'fx_rate': float(fx_rate_str) if fx_rate_str else None,
                             'fee_amount': float(fee_amount_str) if fee_amount_str else None,
                             'fee_currency': fee_currency_str.upper() if fee_currency_str else None,
@@ -2052,7 +2540,7 @@ def bulk_upload():
                     with sqlite3.connect(DATABASE) as conn:
                         for trade in trades_to_add:
                             conn.execute(
-                                'INSERT INTO trades (symbol, name, trade_type, quantity, price, currency, trade_date, broker, fx_rate, fee_amount, fee_currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                                'INSERT INTO trades (symbol, name, trade_type, quantity, price, currency, trade_date, broker, account_name, tax_status, fx_rate, fee_amount, fee_currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                                 (
                                     trade['symbol'],
                                     trade['name'],
@@ -2062,6 +2550,8 @@ def bulk_upload():
                                     trade['currency'],
                                     trade['trade_date'],
                                     trade['broker'],
+                                    trade['account_name'],
+                                    trade['tax_status'],
                                     trade['fx_rate'],
                                     trade['fee_amount'],
                                     trade['fee_currency']

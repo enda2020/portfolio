@@ -58,6 +58,24 @@
                             {% endfor %}
                         </select>
                     </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="account_name" class="form-label">Account Name</label>
+                            <select class="form-select" id="account_name" name="account_name" required>
+                                {% for account_name in account_names %}
+                                <option value="{{ account_name }}" {% if (trade.account_name or 'Default') == account_name %}selected{% endif %}>{{ account_name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="tax_status" class="form-label">Tax Status</label>
+                            <select class="form-select" id="tax_status" name="tax_status" required>
+                                {% for tax_status in tax_statuses %}
+                                <option value="{{ tax_status }}" {% if (trade.tax_status or 'Taxable') == tax_status %}selected{% endif %}>{{ tax_status }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
                     <div class="mb-3">
                         <label for="fx_rate" class="form-label">FX Rate (TTS/TTB)</label>
                         <input type="number" step="any" class="form-control" id="fx_rate" name="fx_rate" value="{{ trade.fx_rate or '' }}">

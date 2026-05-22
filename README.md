@@ -5,18 +5,25 @@ A web application for tracking a stock portfolio by logging individual trades. I
 ## Features
 
 - **Trade Logging**: Record individual buy/sell transactions with details like broker, fees, and currency exchange rates.
+- **Mutual Fund Tracking**: Record Japanese mutual fund transactions, edit them later, clone existing entries, and include them in portfolio and tax calculations.
 - **Portfolio Dashboard**:
     - Automatically calculates and displays a summary of your current holdings.
     - JPY-first view of Total Value, Unrealized P&L, and Realized P&L.
     - Line chart showing portfolio value history over time.
-    - Interactive pie chart to visualize portfolio composition by JPY value, with filters for broker and currency.
+    - Interactive pie chart to visualize portfolio composition by JPY value, with filters for broker, account, tax status, and currency.
+    - Expandable holdings table that opens each row to show current holding detail, a 7-day trend, and the trade history behind that position.
 - **Japanese Tax Reporting**:
     - Generates a detailed, year-end tax report for a selected financial year.
+    - Filters reports by broker, account, and taxable/non-taxable status.
     - Calculates proceeds, acquisition costs, and profit/loss in JPY using the required moving-average method.
     - Provides a transparent, expandable breakdown for each sale, showing the exact data and calculations used.
 - **Data Management**:
     - Bulk upload trades from a CSV file with robust validation.
     - Export all trades to a CSV file for mass editing or backup.
+    - Clone stock/ETF and mutual fund transactions to speed up repeated entries.
+- **Configurable Values**:
+    - Manage brokers, account names, and tax statuses from Tools -> Config.
+    - Store configurable values in SQLite so they persist with the rest of the portfolio data.
 - **Live Market Data**: Fetches current stock/ETF prices and USD/JPY exchange rates from Yahoo Finance, plus Japanese mutual fund NAVs from Yahoo Finance Japan.
 - **Performance & Production Ready**:
     - Market data is cached for 5 minutes to ensure fast page loads.
@@ -54,12 +61,16 @@ Set `APP_LATEST_VERSION_URL` to another plain-text version URL, or set it to an 
 
 Dashboard "today" values reset at 08:30 Japan time by default. After the reset, stale daily market moves from the previous market day are shown as zero, so Friday's daily values do not continue through the weekend.
 
-You can change the reset time from Tools -> Config. These environment variables seed the defaults for a fresh database:
+You can change the reset time from Tools -> Config. The saved value is stored in SQLite and is the normal source of truth after the database has been created.
+
+These environment variables are still supported, but they only seed the defaults for a fresh database and act as a fallback if database settings cannot be loaded:
 
 ```text
 PORTFOLIO_DAILY_RESET_TIME=08:30
 PORTFOLIO_DAILY_RESET_TIMEZONE=Asia/Tokyo
 ```
+
+If you already have a database and have saved the reset time in Tools -> Config, you do not need to keep these values in `.env` unless you want them for future fresh installs.
 
 ### Option 1: Docker Compose (Easiest)
 

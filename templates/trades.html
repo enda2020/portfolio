@@ -22,6 +22,8 @@
                             <th>Symbol</th>
                             <th>Type</th>
                             <th>Broker</th>
+                            <th>Account</th>
+                            <th>Tax Status</th>
                             <th>Quantity</th>
                             <th>Price</th>
                             <th>Days Since Purchase</th>
@@ -37,6 +39,8 @@
                             <td><strong>{{ trade.symbol }}</strong></td>
                             <td>{{ trade.trade_type }}</td>
                             <td>{{ trade.broker }}</td>
+                            <td>{{ trade.account_name or 'Default' }}</td>
+                            <td>{{ trade.tax_status or 'Taxable' }}</td>
                             <td><span class="sensitive-data">{{ trade.quantity }}</span></td>
                             <td><span class="sensitive-data">{{ 'JPY ' if trade.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(trade.price) }}</span></td>
                             <td>
@@ -61,6 +65,10 @@
                             </td>
                             <td>
                                 <a href="{{ url_for('edit_trade', trade_id=trade.id) }}" class="btn btn-sm btn-outline-primary">Edit</a>
+                                <form method="POST" action="{{ url_for('clone_trade', trade_id=trade.id) }}" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-info">Clone</button>
+                                </form>
                                 <form method="POST" action="{{ url_for('delete_trade', trade_id=trade.id) }}" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this trade?')">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                     <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>

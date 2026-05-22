@@ -19,6 +19,7 @@
             <div class="card-body">
                 <form method="POST" action="{{ url_for('app_config') }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="action" value="save_settings">
 
                     <div class="row">
                         <div class="col-md-6 mb-3">
@@ -48,5 +49,49 @@
             </div>
         </div>
     </div>
+</div>
+
+<div class="row mt-4">
+    {% for category, label in config_option_labels.items() %}
+    <div class="col-lg-4 mb-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <h4 class="mb-0">{{ label }}</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('app_config') }}" class="row g-2 mb-3">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="action" value="add_option">
+                    <input type="hidden" name="category" value="{{ category }}">
+                    <div class="col">
+                        <input type="text" class="form-control" name="value" placeholder="New value" maxlength="80" required>
+                    </div>
+                    <div class="col-auto">
+                        <button type="submit" class="btn btn-primary">Add</button>
+                    </div>
+                </form>
+
+                {% for option in config_option_rows[category] %}
+                <div class="d-flex gap-2 align-items-center mb-2">
+                    <form method="POST" action="{{ url_for('app_config') }}" class="d-flex gap-2 flex-grow-1">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="hidden" name="action" value="update_option">
+                        <input type="hidden" name="option_id" value="{{ option.id }}">
+                        <input type="hidden" name="category" value="{{ category }}">
+                        <input type="text" class="form-control" name="value" value="{{ option.value }}" maxlength="80" required>
+                        <button type="submit" class="btn btn-outline-primary">Save</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('app_config') }}" onsubmit="return confirm('Delete this configuration value?')">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="hidden" name="action" value="delete_option">
+                        <input type="hidden" name="option_id" value="{{ option.id }}">
+                        <button type="submit" class="btn btn-outline-danger">Delete</button>
+                    </form>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
 </div>
 {% endblock %}
