@@ -1187,7 +1187,11 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
                 'currency': trade['currency'],
                 'quantity': 0,
                 'total_cost': 0,
+                'total_cost_jpy': 0,
                 'realized_pnl_native': 0,
+                'realized_pnl_jpy': 0,
+                'realized_price_pnl_jpy': 0,
+                'realized_fx_pnl_jpy': 0,
                 'today_buy_quantity': 0,
                 'today_buy_cost': 0,
                 'trade_history': []
@@ -1213,32 +1217,61 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
         # Fee calculation
         fee_currency = trade['fee_currency']
         trade_currency = trade['currency']
+        trade_fx_rate = trade['fx_rate'] or exchange_rate
 
         fee_in_native_currency = fee_amount
         if fee_currency and fee_currency != trade_currency and exchange_rate > 0:
             if fee_currency == 'JPY' and trade_currency == 'USD':
-                fee_in_native_currency = fee_amount / exchange_rate
+                fee_in_native_currency = fee_amount / trade_fx_rate if trade_fx_rate else 0
             elif fee_currency == 'USD' and trade_currency == 'JPY':
-                fee_in_native_currency = fee_amount * exchange_rate
+                fee_in_native_currency = fee_amount * trade_fx_rate if trade_fx_rate else 0
+
+        fee_jpy = 0
+        if fee_currency == 'JPY':
+            fee_jpy = fee_amount
+        elif fee_currency == 'USD' and trade_fx_rate:
+            fee_jpy = fee_amount * trade_fx_rate
 
         if trade['trade_type'] == 'BUY':
-            trade_cost_native = _trade_gross_value(trade) + fee_in_native_currency
+            gross_value_native = _trade_gross_value(trade)
+            trade_cost_native = gross_value_native + fee_in_native_currency
+            if trade_currency == 'JPY':
+                trade_cost_jpy = gross_value_native + fee_jpy
+            else:
+                trade_cost_jpy = (gross_value_native * trade_fx_rate) + fee_jpy if trade_fx_rate else 0
             holdings[key]['quantity'] += trade['quantity']
             holdings[key]['total_cost'] += trade_cost_native
+            holdings[key]['total_cost_jpy'] += trade_cost_jpy
             if trade['trade_date'] == today_str:
                 holdings[key]['today_buy_quantity'] += trade['quantity']
                 holdings[key]['today_buy_cost'] += trade_cost_native
         elif trade['trade_type'] == 'SELL':
             avg_unit_cost_basis = 0
+            avg_unit_cost_basis_jpy = 0
             if holdings[key]['quantity'] > 0:
                 avg_unit_cost_basis = holdings[key]['total_cost'] / holdings[key]['quantity']
+                avg_unit_cost_basis_jpy = holdings[key]['total_cost_jpy'] / holdings[key]['quantity']
             
             cost_of_shares_sold = trade['quantity'] * avg_unit_cost_basis
-            proceeds = _trade_gross_value(trade) - fee_in_native_currency
+            cost_of_shares_sold_jpy = trade['quantity'] * avg_unit_cost_basis_jpy
+            gross_value_native = _trade_gross_value(trade)
+            proceeds = gross_value_native - fee_in_native_currency
+            if trade_currency == 'JPY':
+                proceeds_jpy = gross_value_native - fee_jpy
+            else:
+                proceeds_jpy = (gross_value_native * trade_fx_rate) - fee_jpy if trade_fx_rate else 0
+            realized_pnl_native = proceeds - cost_of_shares_sold
+            realized_pnl_jpy = proceeds_jpy - cost_of_shares_sold_jpy
+            realized_price_pnl_jpy = realized_pnl_native if trade_currency == 'JPY' else realized_pnl_native * trade_fx_rate
+            realized_fx_pnl_jpy = realized_pnl_jpy - realized_price_pnl_jpy
             
-            holdings[key]['realized_pnl_native'] += proceeds - cost_of_shares_sold
+            holdings[key]['realized_pnl_native'] += realized_pnl_native
+            holdings[key]['realized_pnl_jpy'] += realized_pnl_jpy
+            holdings[key]['realized_price_pnl_jpy'] += realized_price_pnl_jpy
+            holdings[key]['realized_fx_pnl_jpy'] += realized_fx_pnl_jpy
             holdings[key]['quantity'] -= trade['quantity']
             holdings[key]['total_cost'] -= cost_of_shares_sold
+            holdings[key]['total_cost_jpy'] -= cost_of_shares_sold_jpy
 
     # --- Combine display rows ---
     # Keep the broker-level accounting above, then combine open holdings for display.
@@ -1247,6 +1280,9 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
     combined_holdings = {}
     summary_list = []
     total_realized_pnl_usd = 0.0
+    total_realized_pnl_jpy = 0.0
+    total_realized_price_pnl_jpy = 0.0
+    total_realized_fx_pnl_jpy = 0.0
 
     for key, data in holdings.items():
         # Apply filters before calculating summary totals
@@ -1259,11 +1295,11 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
         if tax_status_filter and data['tax_status'] != tax_status_filter:
             continue
 
-        realized_pnl_native = data['realized_pnl_native']
-        if data['currency'] == 'JPY' and exchange_rate > 0:
-            total_realized_pnl_usd += realized_pnl_native / exchange_rate
-        else:
-            total_realized_pnl_usd += realized_pnl_native
+        total_realized_pnl_jpy += data['realized_pnl_jpy']
+        total_realized_price_pnl_jpy += data['realized_price_pnl_jpy']
+        total_realized_fx_pnl_jpy += data['realized_fx_pnl_jpy']
+        if exchange_rate > 0:
+            total_realized_pnl_usd += data['realized_pnl_jpy'] / exchange_rate
 
         if data['quantity'] <= 0.00001: # Use a small epsilon for float comparison
             continue # Skip display and market-data lookup for fully sold-off stocks
@@ -1283,6 +1319,7 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
                 'currency': data['currency'],
                 'quantity': 0,
                 'total_cost': 0,
+                'total_cost_jpy': 0,
                 'today_buy_quantity': 0,
                 'today_buy_cost': 0,
                 'trade_history': [],
@@ -1296,6 +1333,7 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
 
         combined_holdings[combined_key]['quantity'] += data['quantity']
         combined_holdings[combined_key]['total_cost'] += data['total_cost']
+        combined_holdings[combined_key]['total_cost_jpy'] += data['total_cost_jpy']
         combined_holdings[combined_key]['today_buy_quantity'] += data['today_buy_quantity']
         combined_holdings[combined_key]['today_buy_cost'] += data['today_buy_cost']
         combined_holdings[combined_key]['trade_history'].extend(data['trade_history'])
@@ -1303,6 +1341,9 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
     # --- Enrichment and Summary ---
     total_portfolio_value_usd = 0.0
     total_unrealized_pnl_usd = 0.0
+    total_unrealized_pnl_jpy = 0.0
+    total_unrealized_price_pnl_jpy = 0.0
+    total_unrealized_fx_pnl_jpy = 0.0
     total_today_pnl_usd = 0.0
     market_data_complete = True
     market_data_timestamps = []
@@ -1384,25 +1425,31 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
 
         # Convert to USD
         if data['currency'] == 'JPY' and exchange_rate > 0:
+            data['current_value_jpy'] = current_value_native
             data['current_value_usd'] = current_value_native / exchange_rate
-            data['pnl_usd'] = data['pnl_native'] / exchange_rate
+            data['price_pnl_jpy'] = data['pnl_native']
         else:
+            data['current_value_jpy'] = current_value_native * exchange_rate
             data['current_value_usd'] = current_value_native
-            data['pnl_usd'] = data['pnl_native']
-        
-        # Add JPY values for the table and chart
-        data['current_value_jpy'] = data['current_value_usd'] * exchange_rate
-        data['pnl_jpy'] = data['pnl_usd'] * exchange_rate
+            data['price_pnl_jpy'] = data['pnl_native'] * exchange_rate
+
+        data['pnl_jpy'] = data['current_value_jpy'] - data['total_cost_jpy']
+        data['fx_pnl_jpy'] = data['pnl_jpy'] - data['price_pnl_jpy']
+        data['pnl_usd'] = data['pnl_jpy'] / exchange_rate if exchange_rate > 0 else 0
 
         total_portfolio_value_usd += data['current_value_usd']
         total_unrealized_pnl_usd += data['pnl_usd']
+        total_unrealized_pnl_jpy += data['pnl_jpy']
+        total_unrealized_price_pnl_jpy += data['price_pnl_jpy']
+        total_unrealized_fx_pnl_jpy += data['fx_pnl_jpy']
         
         summary_list.append(data)
 
     total_portfolio_value_jpy = total_portfolio_value_usd * exchange_rate if exchange_rate > 0 else 0
-    total_realized_pnl_jpy = total_realized_pnl_usd * exchange_rate if exchange_rate > 0 else 0
-    total_unrealized_pnl_jpy = total_unrealized_pnl_usd * exchange_rate if exchange_rate > 0 else 0
     total_today_pnl_jpy = total_today_pnl_usd * exchange_rate if exchange_rate > 0 else 0
+    total_pnl_jpy = total_realized_pnl_jpy + total_unrealized_pnl_jpy
+    total_price_pnl_jpy = total_realized_price_pnl_jpy + total_unrealized_price_pnl_jpy
+    total_fx_pnl_jpy = total_realized_fx_pnl_jpy + total_unrealized_fx_pnl_jpy
     oldest_market_data = min(market_data_timestamps, key=lambda item: item['sort']) if market_data_timestamps else None
     latest_market_data = max(market_data_timestamps, key=lambda item: item['sort']) if market_data_timestamps else None
 
@@ -1414,8 +1461,15 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
         'total_realized_pnl_jpy': total_realized_pnl_jpy,
         'total_unrealized_pnl_usd': total_unrealized_pnl_usd,
         'total_unrealized_pnl_jpy': total_unrealized_pnl_jpy,
+        'total_unrealized_price_pnl_jpy': total_unrealized_price_pnl_jpy,
+        'total_unrealized_fx_pnl_jpy': total_unrealized_fx_pnl_jpy,
         'total_today_pnl_usd': total_today_pnl_usd,
         'total_today_pnl_jpy': total_today_pnl_jpy,
+        'total_realized_price_pnl_jpy': total_realized_price_pnl_jpy,
+        'total_realized_fx_pnl_jpy': total_realized_fx_pnl_jpy,
+        'total_pnl_jpy': total_pnl_jpy,
+        'total_price_pnl_jpy': total_price_pnl_jpy,
+        'total_fx_pnl_jpy': total_fx_pnl_jpy,
         'market_data_complete': market_data_complete,
         'oldest_market_data_at': oldest_market_data['display'] if oldest_market_data else None,
         'latest_market_data_at': latest_market_data['display'] if latest_market_data else None,

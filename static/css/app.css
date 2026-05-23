@@ -187,6 +187,27 @@ h1 {
   --metric-color: var(--app-loss);
 }
 
+.filter-card {
+  overflow: hidden;
+}
+
+.filter-toggle-row {
+  align-items: center;
+  display: flex;
+  gap: 0.85rem;
+  justify-content: space-between;
+  padding: 0.85rem 1rem;
+}
+
+.filter-summary {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
 .performance-grid {
   display: grid;
   gap: 0.85rem;
@@ -468,6 +489,20 @@ canvas {
     min-height: 118px;
   }
 
+  .filter-toggle-row {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.65rem;
+  }
+
+  .filter-toggle-row .btn {
+    width: 100%;
+  }
+
+  .filter-summary {
+    justify-content: flex-start;
+  }
+
   .performance-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -482,6 +517,33 @@ canvas {
   .table td:nth-child(4),
   .table td:nth-child(5) {
     white-space: normal;
+  }
+
+  .holdings-table .desktop-holding-col {
+    display: none;
+  }
+
+  .holdings-table th,
+  .holdings-table td {
+    white-space: normal;
+  }
+
+  .holdings-table th:first-child,
+  .holdings-table td:first-child {
+    padding-left: 0.45rem;
+    padding-right: 0.25rem;
+    width: 2rem;
+  }
+
+  .holdings-table th:nth-child(2),
+  .holdings-table td:nth-child(2) {
+    min-width: 9rem;
+  }
+
+  .holdings-table th:last-child,
+  .holdings-table td:last-child {
+    text-align: right;
+    white-space: nowrap;
   }
 
   .btn {

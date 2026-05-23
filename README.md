@@ -11,6 +11,7 @@ A web application for tracking a stock portfolio by logging individual trades. I
     - JPY-first view of Total Value, Unrealized P&L, and Realized P&L.
     - Line chart showing portfolio value history over time.
     - Interactive pie chart to visualize portfolio composition by JPY value, with filters for broker, account, tax status, and currency.
+    - P&L breakdown that separates price/instrument gains from FX impact.
     - Expandable holdings table that opens each row to show current holding detail, a 7-day trend, and the trade history behind that position.
 - **Japanese Tax Reporting**:
     - Generates a detailed, year-end tax report for a selected financial year.

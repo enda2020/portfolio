@@ -26,45 +26,63 @@
     </div>
 </div>
 
-<div class="card mb-4">
-    <div class="card-body">
-        <form method="GET" action="{{ url_for('index') }}" id="filterForm" class="row g-3 align-items-end">
-            <div class="col-md-3">
-                <label for="brokerFilter" class="form-label">Filter by Broker</label>
-                <select id="brokerFilter" name="broker" class="form-select">
-                    <option value="all" {% if selected_broker == 'all' %}selected{% endif %}>All Brokers</option>
-                    {% for broker in brokers %}
-                    <option value="{{ broker }}" {% if selected_broker == broker %}selected{% endif %}>{{ broker }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="col-md-3">
-                <label for="accountNameFilter" class="form-label">Filter by Account</label>
-                <select id="accountNameFilter" name="account_name" class="form-select">
-                    <option value="all" {% if selected_account_name == 'all' %}selected{% endif %}>All Accounts</option>
-                    {% for account_name in account_names %}
-                    <option value="{{ account_name }}" {% if selected_account_name == account_name %}selected{% endif %}>{{ account_name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="col-md-3">
-                <label for="taxStatusFilter" class="form-label">Filter by Tax Status</label>
-                <select id="taxStatusFilter" name="tax_status" class="form-select">
-                    <option value="all" {% if selected_tax_status == 'all' %}selected{% endif %}>All Tax Statuses</option>
-                    {% for tax_status in tax_statuses %}
-                    <option value="{{ tax_status }}" {% if selected_tax_status == tax_status %}selected{% endif %}>{{ tax_status }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="col-md-3">
-                <label for="currencyFilter" class="form-label">Filter by Currency</label>
-                <select id="currencyFilter" name="currency" class="form-select">
-                    <option value="all" {% if selected_currency == 'all' %}selected{% endif %}>All Currencies</option>
-                    <option value="USD" {% if selected_currency == 'USD' %}selected{% endif %}>USD</option>
-                    <option value="JPY" {% if selected_currency == 'JPY' %}selected{% endif %}>JPY</option>
-                </select>
-            </div>
-        </form>
+{% set has_active_filters = selected_broker != 'all' or selected_account_name != 'all' or selected_tax_status != 'all' or selected_currency != 'all' %}
+<div class="card filter-card mb-4">
+    <div class="filter-toggle-row">
+        <button class="btn btn-outline-info" type="button" data-bs-toggle="collapse" data-bs-target="#dashboardFilters" aria-expanded="{{ 'true' if has_active_filters else 'false' }}" aria-controls="dashboardFilters">
+            <i class="fas fa-filter me-1"></i> Filters
+        </button>
+        <div class="filter-summary">
+            {% if has_active_filters %}
+                {% if selected_broker != 'all' %}<span class="badge bg-info">{{ selected_broker }}</span>{% endif %}
+                {% if selected_account_name != 'all' %}<span class="badge bg-info">{{ selected_account_name }}</span>{% endif %}
+                {% if selected_tax_status != 'all' %}<span class="badge bg-info">{{ selected_tax_status }}</span>{% endif %}
+                {% if selected_currency != 'all' %}<span class="badge bg-info">{{ selected_currency }}</span>{% endif %}
+            {% else %}
+                <span class="text-muted">All holdings</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="collapse {% if has_active_filters %}show{% endif %}" id="dashboardFilters">
+        <div class="card-body pt-0">
+            <form method="GET" action="{{ url_for('index') }}" id="filterForm" class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label for="brokerFilter" class="form-label">Filter by Broker</label>
+                    <select id="brokerFilter" name="broker" class="form-select">
+                        <option value="all" {% if selected_broker == 'all' %}selected{% endif %}>All Brokers</option>
+                        {% for broker in brokers %}
+                        <option value="{{ broker }}" {% if selected_broker == broker %}selected{% endif %}>{{ broker }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="accountNameFilter" class="form-label">Filter by Account</label>
+                    <select id="accountNameFilter" name="account_name" class="form-select">
+                        <option value="all" {% if selected_account_name == 'all' %}selected{% endif %}>All Accounts</option>
+                        {% for account_name in account_names %}
+                        <option value="{{ account_name }}" {% if selected_account_name == account_name %}selected{% endif %}>{{ account_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="taxStatusFilter" class="form-label">Filter by Tax Status</label>
+                    <select id="taxStatusFilter" name="tax_status" class="form-select">
+                        <option value="all" {% if selected_tax_status == 'all' %}selected{% endif %}>All Tax Statuses</option>
+                        {% for tax_status in tax_statuses %}
+                        <option value="{{ tax_status }}" {% if selected_tax_status == tax_status %}selected{% endif %}>{{ tax_status }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="currencyFilter" class="form-label">Filter by Currency</label>
+                    <select id="currencyFilter" name="currency" class="form-select">
+                        <option value="all" {% if selected_currency == 'all' %}selected{% endif %}>All Currencies</option>
+                        <option value="USD" {% if selected_currency == 'USD' %}selected{% endif %}>USD</option>
+                        <option value="JPY" {% if selected_currency == 'JPY' %}selected{% endif %}>JPY</option>
+                    </select>
+                </div>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -102,6 +120,34 @@
             <div class="card-body">
                 <h3 class="card-title"><span class="sensitive-data">{{- '+' if total_realized_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_realized_pnl_jpy) }}</span></h3>
                 <p class="card-text text-white-50">approx. <span class="sensitive-data">{{ '+' if total_realized_pnl_usd >= 0 else '' }}${{ "{:,.2f}".format(total_realized_pnl_usd) }}</span></p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">
+        <h4>P&amp;L Breakdown</h4>
+    </div>
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-4">
+                <div class="detail-label">Overall P&amp;L</div>
+                <div class="h4 mb-0 sensitive-data {{ 'text-success' if total_pnl_jpy >= 0 else 'text-danger' }}">
+                    {{- '+' if total_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_pnl_jpy) }}
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="detail-label">Price / Instrument</div>
+                <div class="h4 mb-0 sensitive-data {{ 'text-success' if total_price_pnl_jpy >= 0 else 'text-danger' }}">
+                    {{- '+' if total_price_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_price_pnl_jpy) }}
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="detail-label">FX Impact</div>
+                <div class="h4 mb-0 sensitive-data {{ 'text-success' if total_fx_pnl_jpy >= 0 else 'text-danger' }}">
+                    {{- '+' if total_fx_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_fx_pnl_jpy) }}
+                </div>
             </div>
         </div>
     </div>
@@ -150,12 +196,12 @@
                         <tr>
                             <th scope="col"></th>
                             <th scope="col">Symbol</th>
-                            <th scope="col">Quantity</th>
-                            <th scope="col">Avg. Cost</th>
-                            <th scope="col">Current Price</th>
-                            <th scope="col">Value</th>
-                            <th scope="col">Total P&amp;L</th>
-                            <th scope="col">Today</th>
+                            <th scope="col" class="desktop-holding-col">Quantity</th>
+                            <th scope="col" class="desktop-holding-col">Avg. Cost</th>
+                            <th scope="col" class="desktop-holding-col">Current Price</th>
+                            <th scope="col" class="desktop-holding-col">Value</th>
+                            <th scope="col" class="desktop-holding-col">Total P&amp;L</th>
+                            <th scope="col" class="desktop-holding-col">Today</th>
                             <th scope="col">Today's P&amp;L</th>
                         </tr>
                     </thead>
@@ -167,19 +213,19 @@
                                 <strong>{{ stock.symbol }}</strong><br>
                                 <small class="text-muted">{{ stock.name }}</small>
                             </td>
-                            <td><span class="sensitive-data">{{ "%.2f"|format(stock.quantity) }}</span></td>
-                            <td><span class="sensitive-data">{{ '&yen;'|safe if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.avg_cost_basis) }}</span></td>
-                            <td>
+                            <td class="desktop-holding-col"><span class="sensitive-data">{{ "%.2f"|format(stock.quantity) }}</span></td>
+                            <td class="desktop-holding-col"><span class="sensitive-data">{{ '&yen;'|safe if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.avg_cost_basis) }}</span></td>
+                            <td class="desktop-holding-col">
                                 <span class="sensitive-data">{{ '&yen;'|safe if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.current_price) }}</span>
                                 {% if stock.quote_session != 'regular' %}
                                 <span class="badge bg-info ms-1">{{ stock.quote_session }}</span>
                                 {% endif %}
                             </td>
-                            <td><span class="sensitive-data">&yen;{{ "{:,.0f}".format(stock.current_value_jpy) }}</span></td>
-                            <td class="{{ 'text-success' if stock.pnl_jpy >= 0 else 'text-danger' }}">
+                            <td class="desktop-holding-col"><span class="sensitive-data">&yen;{{ "{:,.0f}".format(stock.current_value_jpy) }}</span></td>
+                            <td class="desktop-holding-col {{ 'text-success' if stock.pnl_jpy >= 0 else 'text-danger' }}">
                                 <span class="sensitive-data">{{- '+' if stock.pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(stock.pnl_jpy) }}</span>
                             </td>
-                            <td class="{{ 'text-success' if stock.change_today >= 0 else 'text-danger' }}">
+                            <td class="desktop-holding-col {{ 'text-success' if stock.change_today >= 0 else 'text-danger' }}">
                                 <span class="sensitive-data">{{- '+' if stock.change_today >= 0 else '' }}{{ "{:,.2f}".format(stock.change_today) }}</span>
                             </td>
                             <td class="sensitive-data {{ 'text-success' if stock.today_pnl_jpy > 0 else 'text-danger' if stock.today_pnl_jpy < 0 else '' }}">
@@ -198,6 +244,18 @@
                                             <div class="col-md-3">
                                                 <div class="detail-label">Currency</div>
                                                 <div>{{ stock.currency }}</div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="detail-label">Quantity</div>
+                                                <div class="sensitive-data">{{ "%.2f"|format(stock.quantity) }}</div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="detail-label">Avg. Cost</div>
+                                                <div class="sensitive-data">{{ '&yen;'|safe if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.avg_cost_basis) }}</div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="detail-label">Current Price</div>
+                                                <div class="sensitive-data">{{ '&yen;'|safe if stock.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(stock.current_price) }}</div>
                                             </div>
                                             <div class="col-md-3">
                                                 <div class="detail-label">1D Change</div>
