@@ -1,0 +1,510 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Portfolio Tracker API",
+    "version": "0.5.0",
+    "description": "Machine-readable API for portfolio summary, health, history, tax report, options, and version data."
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "paths": {
+    "/api/portfolio": {
+      "get": {
+        "summary": "Get enriched portfolio summary",
+        "parameters": [
+          {
+            "name": "broker",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "all"
+            }
+          },
+          {
+            "name": "currency",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "USD",
+                "JPY"
+              ],
+              "default": "all"
+            }
+          },
+          {
+            "name": "account_name",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "all"
+            }
+          },
+          {
+            "name": "tax_status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "all"
+            }
+          },
+          {
+            "name": "include_history",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "history_days",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 365,
+              "minimum": 1,
+              "maximum": 3650
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Portfolio summary"
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "summary": "Get portfolio health, performance, allocation, and P&L breakdown",
+        "parameters": [
+          {
+            "name": "broker",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "all"
+            }
+          },
+          {
+            "name": "currency",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "USD",
+                "JPY"
+              ],
+              "default": "all"
+            }
+          },
+          {
+            "name": "account_name",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "all"
+            }
+          },
+          {
+            "name": "tax_status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "all"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Health payload"
+          }
+        }
+      }
+    },
+    "/api/history": {
+      "get": {
+        "summary": "Get portfolio history chart rows",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 365,
+              "minimum": 1,
+              "maximum": 3650
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "History rows"
+          }
+        }
+      }
+    },
+    "/api/tax-report": {
+      "get": {
+        "summary": "Get Japanese tax report data",
+        "parameters": [
+          {
+            "name": "year",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "broker",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "all"
+            }
+          },
+          {
+            "name": "account_name",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "all"
+            }
+          },
+          {
+            "name": "tax_status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "all"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tax report payload"
+          },
+          "400": {
+            "description": "Invalid year"
+          }
+        }
+      }
+    },
+    "/api/options": {
+      "get": {
+        "summary": "Get filter options and settings",
+        "responses": {
+          "200": {
+            "description": "Available options"
+          }
+        }
+      }
+    },
+    "/api/trades": {
+      "get": {
+        "summary": "Get combined trade-level data",
+        "parameters": [
+          {
+            "name": "instrument_type",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "stock",
+                "mutual_fund"
+              ],
+              "default": "all"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Combined stock and mutual fund trades"
+          },
+          "400": {
+            "description": "Invalid query parameter"
+          }
+        }
+      }
+    },
+    "/api/trades/stocks": {
+      "get": {
+        "summary": "List stock and ETF trades",
+        "responses": {
+          "200": {
+            "description": "Stock trade rows"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a stock or ETF trade",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "symbol",
+                  "name",
+                  "trade_type",
+                  "quantity",
+                  "price",
+                  "currency",
+                  "trade_date",
+                  "broker",
+                  "account_name",
+                  "tax_status"
+                ],
+                "properties": {
+                  "symbol": {
+                    "type": "string",
+                    "example": "VOO"
+                  },
+                  "name": {
+                    "type": "string",
+                    "example": "Vanguard S&P 500 ETF"
+                  },
+                  "trade_type": {
+                    "type": "string",
+                    "enum": [
+                      "BUY",
+                      "SELL"
+                    ]
+                  },
+                  "quantity": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "price": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "currency": {
+                    "type": "string",
+                    "enum": [
+                      "USD",
+                      "JPY"
+                    ]
+                  },
+                  "trade_date": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "broker": {
+                    "type": "string"
+                  },
+                  "account_name": {
+                    "type": "string"
+                  },
+                  "tax_status": {
+                    "type": "string"
+                  },
+                  "fx_rate": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "exclusiveMinimum": 0
+                  },
+                  "fee_amount": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0
+                  },
+                  "fee_currency": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "USD",
+                      "JPY",
+                      null
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Stock trade created"
+          },
+          "400": {
+            "description": "Validation errors"
+          },
+          "415": {
+            "description": "JSON required"
+          }
+        }
+      }
+    },
+    "/api/trades/stocks/{trade_id}": {
+      "get": {
+        "summary": "Get one stock or ETF trade",
+        "parameters": [
+          {
+            "name": "trade_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stock trade row"
+          },
+          "404": {
+            "description": "Trade not found"
+          }
+        }
+      }
+    },
+    "/api/trades/mutual-funds": {
+      "get": {
+        "summary": "List mutual fund trades",
+        "responses": {
+          "200": {
+            "description": "Mutual fund trade rows"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a mutual fund trade",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "fund_code",
+                  "fund_name",
+                  "transaction_type",
+                  "executed_units",
+                  "nav_per_10000",
+                  "trade_date",
+                  "broker",
+                  "account_name",
+                  "tax_status"
+                ],
+                "properties": {
+                  "fund_code": {
+                    "type": "string",
+                    "example": "0331418A"
+                  },
+                  "fund_name": {
+                    "type": "string"
+                  },
+                  "transaction_type": {
+                    "type": "string",
+                    "enum": [
+                      "BUY",
+                      "SELL"
+                    ]
+                  },
+                  "executed_units": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "nav_per_10000": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "trade_date": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "broker": {
+                    "type": "string"
+                  },
+                  "account_name": {
+                    "type": "string"
+                  },
+                  "tax_status": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Mutual fund trade created"
+          },
+          "400": {
+            "description": "Validation errors"
+          },
+          "415": {
+            "description": "JSON required"
+          }
+        }
+      }
+    },
+    "/api/trades/mutual-funds/{trade_id}": {
+      "get": {
+        "summary": "Get one mutual fund trade",
+        "parameters": [
+          {
+            "name": "trade_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mutual fund trade row"
+          },
+          "404": {
+            "description": "Trade not found"
+          }
+        }
+      }
+    },
+    "/api/version": {
+      "get": {
+        "summary": "Get application version status",
+        "responses": {
+          "200": {
+            "description": "Version status"
+          }
+        }
+      }
+    },
+    "/api/openapi.json": {
+      "get": {
+        "summary": "Get this OpenAPI document",
+        "responses": {
+          "200": {
+            "description": "OpenAPI document"
+          }
+        }
+      }
+    }
+  }
+}

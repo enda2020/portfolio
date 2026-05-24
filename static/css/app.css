@@ -332,6 +332,17 @@ h1 {
   background: rgba(255, 255, 255, 0.018);
 }
 
+.pnl-breakdown-table td,
+.pnl-breakdown-table th {
+  white-space: nowrap;
+}
+
+.pnl-breakdown-table td:first-child,
+.pnl-breakdown-table th:first-child {
+  min-width: 11rem;
+  white-space: normal;
+}
+
 .badge {
   border-radius: 999px;
   font-weight: 650;

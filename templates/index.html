@@ -127,65 +127,6 @@
 
 <div class="card mb-4">
     <div class="card-header">
-        <h4>P&amp;L Breakdown</h4>
-    </div>
-    <div class="card-body">
-        <div class="row g-3">
-            <div class="col-md-4">
-                <div class="detail-label">Overall P&amp;L</div>
-                <div class="h4 mb-0 sensitive-data {{ 'text-success' if total_pnl_jpy >= 0 else 'text-danger' }}">
-                    {{- '+' if total_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_pnl_jpy) }}
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="detail-label">Price / Instrument</div>
-                <div class="h4 mb-0 sensitive-data {{ 'text-success' if total_price_pnl_jpy >= 0 else 'text-danger' }}">
-                    {{- '+' if total_price_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_price_pnl_jpy) }}
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="detail-label">FX Impact</div>
-                <div class="h4 mb-0 sensitive-data {{ 'text-success' if total_fx_pnl_jpy >= 0 else 'text-danger' }}">
-                    {{- '+' if total_fx_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_fx_pnl_jpy) }}
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="row mb-4">
-    <div class="col-lg-7 mb-4">
-        <div class="card">
-            <div class="card-header">
-                <h4>Portfolio Value Over Time (JPY)</h4>
-            </div>
-            <div class="card-body">
-                <canvas id="valueHistoryChart" style="max-height: 300px;"></canvas>
-            </div>
-        </div>
-        <div class="card mt-4">
-            <div class="card-header">
-                <h4>Unrealized P&amp;L Over Time (JPY)</h4>
-            </div>
-            <div class="card-body">
-                <canvas id="unrealizedHistoryChart" style="max-height: 170px;"></canvas>
-            </div>
-        </div>
-    </div>
-    <div class="col-lg-5 mb-4">
-        <div class="card">
-            <div class="card-header">
-                <h4>Portfolio Composition (by JPY Value)</h4>
-            </div>
-            <div class="card-body">
-                <canvas id="portfolioPieChart" style="max-height: 300px; max-width: 100%;"></canvas>
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="card mb-4">
-    <div class="card-header">
         <h4>Today's Overview</h4>
     </div>
     <div class="card-body">
@@ -327,11 +268,6 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-    const stocks = {{ stocks|tojson }};
-    let historyData = {{ history_data|tojson }};
-    let pieChart = null;
-    const chartLegendPosition = window.innerWidth < 768 ? 'bottom' : 'right';
-
     const brokerFilter = document.getElementById('brokerFilter');
     const currencyFilter = document.getElementById('currencyFilter');
     const accountNameFilter = document.getElementById('accountNameFilter');
@@ -361,52 +297,6 @@ document.addEventListener('DOMContentLoaded', function () {
             if (row) row.classList.remove('is-expanded');
         });
     });
-
-    function renderPieChart(stocksToRender) {
-        const labels = stocksToRender.map(s => s.broker ? `${s.symbol} (${s.broker})` : s.symbol);
-        const data = stocksToRender.map(s => s.current_value_jpy);
-
-        const pieChartData = {
-            labels: labels,
-            datasets: [{
-                label: 'Value (JPY)',
-                data: data,
-                backgroundColor: [
-                    '#3dd6c6', '#7aa7ff', '#50d890', '#f7c948', '#ff6b7a',
-                    '#b48cff', '#38bdf8', '#f59e0b', '#f472b6', '#94a3b8'
-                ],
-                hoverOffset: 4
-            }]
-        };
-
-        const pieConfig = {
-            type: 'pie',
-            data: pieChartData,
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: chartLegendPosition,
-                    }
-                }
-            }
-        };
-
-        const ctx = document.getElementById('portfolioPieChart').getContext('2d');
-        if (pieChart) {
-            pieChart.destroy();
-        }
-
-        if (stocksToRender && stocksToRender.length > 0) {
-            pieChart = new Chart(ctx, pieConfig);
-        } else {
-            const parent = ctx.canvas.parentElement;
-            parent.innerHTML = '<div class="text-center p-5 text-muted">No data to display for current filter.</div>';
-        }
-    }
-    
-    renderPieChart(stocks);
 
     function renderSparklines() {
         const sparklineCanvases = document.querySelectorAll('.sparkline');
@@ -446,77 +336,6 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     renderSparklines();
-
-    function yenTick(value) {
-        return '\u00a5' + new Intl.NumberFormat('ja-JP').format(value);
-    }
-
-    if (historyData && historyData.length > 0) {
-        const labels = historyData.map(h => h.date);
-        const data = historyData.map(h => h.value_jpy);
-        const unrealizedData = historyData.map(h => h.unrealized_pnl_jpy);
-
-        const lineChartData = {
-            labels: labels,
-            datasets: [{
-                label: 'Portfolio Value (JPY)',
-                data: data,
-                borderColor: '#3dd6c6',
-                backgroundColor: 'rgba(61, 214, 198, 0.12)',
-                fill: true,
-                tension: 0.1
-            }]
-        };
-
-        const lineConfig = {
-            type: 'line',
-            data: lineChartData,
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    y: {
-                        ticks: {
-                            callback: yenTick
-                        }
-                    }
-                }
-            }
-        };
-
-        new Chart(document.getElementById('valueHistoryChart'), lineConfig);
-
-        if (unrealizedData.some(value => value !== null && value !== undefined)) {
-            new Chart(document.getElementById('unrealizedHistoryChart'), {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: 'Unrealized P&L (JPY)',
-                        data: unrealizedData,
-                        borderColor: '#7aa7ff',
-                        backgroundColor: 'rgba(122, 167, 255, 0.12)',
-                        fill: true,
-                        tension: 0.1
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false }
-                    },
-                    scales: {
-                        y: {
-                            ticks: {
-                                callback: yenTick
-                            }
-                        }
-                    }
-                }
-            });
-        }
-    }
 });
 </script>
 {% endblock %}

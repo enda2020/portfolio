@@ -58,6 +58,29 @@ https://raw.githubusercontent.com/enda2020/portfolio/main/VERSION
 
 Set `APP_LATEST_VERSION_URL` to another plain-text version URL, or set it to an empty value to disable update checks.
 
+### API
+
+The app exposes JSON endpoints for integrations:
+
+```text
+GET /api/portfolio
+GET /api/health
+GET /api/history
+GET /api/tax-report
+GET /api/options
+GET /api/trades
+GET /api/trades/stocks
+POST /api/trades/stocks
+GET /api/trades/stocks/{trade_id}
+GET /api/trades/mutual-funds
+POST /api/trades/mutual-funds
+GET /api/trades/mutual-funds/{trade_id}
+GET /api/version
+GET /api/openapi.json
+```
+
+`/api/openapi.json` serves a machine-readable OpenAPI 3.1 document for tools that can discover or import APIs. A generated copy can also be written to `docs/openapi.json`; that generated file is intentionally ignored by Git and `.aiignore`.
+
 ### Daily Reset
 
 Dashboard "today" values reset at 08:30 Japan time by default. After the reset, stale daily market moves from the previous market day are shown as zero, so Friday's daily values do not continue through the weekend.

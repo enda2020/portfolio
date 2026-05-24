@@ -106,6 +106,128 @@
     </div>
 </div>
 
+<div class="card mb-4">
+    <div class="card-header">
+        <h4 class="mb-0">P&amp;L Breakdown</h4>
+    </div>
+    <div class="card-body">
+        <div class="row g-3 mb-4">
+            <div class="col-md-4">
+                <div class="detail-label">Overall P&amp;L</div>
+                <div class="h4 mb-0 sensitive-data {{ 'text-success' if total_pnl_jpy >= 0 else 'text-danger' }}">
+                    {{- '+' if total_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_pnl_jpy) }}
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="detail-label">Price / Instrument</div>
+                <div class="h4 mb-0 sensitive-data {{ 'text-success' if total_price_pnl_jpy >= 0 else 'text-danger' }}">
+                    {{- '+' if total_price_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_price_pnl_jpy) }}
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="detail-label">FX Impact</div>
+                <div class="h4 mb-0 sensitive-data {{ 'text-success' if total_fx_pnl_jpy >= 0 else 'text-danger' }}">
+                    {{- '+' if total_fx_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_fx_pnl_jpy) }}
+                </div>
+            </div>
+        </div>
+
+        {% if health.stocks %}
+        <div class="table-responsive">
+            <table class="table table-hover table-dark pnl-breakdown-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Broker</th>
+                        <th>Weight</th>
+                        <th>Value</th>
+                        <th>Total P&amp;L</th>
+                        <th>Price / Instrument</th>
+                        <th>FX Impact</th>
+                        <th>Today</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for stock in health.stocks %}
+                    <tr>
+                        <td>
+                            <strong>{{ stock.symbol }}</strong><br>
+                            <small class="text-muted">{{ stock.name }}</small>
+                        </td>
+                        <td>{{ stock.broker }}</td>
+                        <td>{{ "%.1f"|format(stock.weight_percent) }}%</td>
+                        <td class="sensitive-data">&yen;{{ "{:,.0f}".format(stock.current_value_jpy) }}</td>
+                        <td class="sensitive-data {{ 'text-success' if stock.pnl_jpy >= 0 else 'text-danger' }}">
+                            {{ '+' if stock.pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(stock.pnl_jpy) }}
+                        </td>
+                        <td class="sensitive-data {{ 'text-success' if stock.price_pnl_jpy >= 0 else 'text-danger' }}">
+                            {{ '+' if stock.price_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(stock.price_pnl_jpy) }}
+                        </td>
+                        <td class="sensitive-data {{ 'text-success' if stock.fx_pnl_jpy >= 0 else 'text-danger' }}">
+                            {{ '+' if stock.fx_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(stock.fx_pnl_jpy) }}
+                        </td>
+                        <td class="sensitive-data {{ 'text-success' if stock.today_pnl_jpy > 0 else 'text-danger' if stock.today_pnl_jpy < 0 else '' }}">
+                            {{ '+' if stock.today_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(stock.today_pnl_jpy) }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr class="table-active">
+                        <td colspan="4" class="text-end"><strong>Total Open Holdings</strong></td>
+                        <td class="sensitive-data {{ 'text-success' if total_unrealized_pnl_jpy >= 0 else 'text-danger' }}">
+                            <strong>{{ '+' if total_unrealized_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_unrealized_pnl_jpy) }}</strong>
+                        </td>
+                        <td class="sensitive-data {{ 'text-success' if total_unrealized_price_pnl_jpy >= 0 else 'text-danger' }}">
+                            <strong>{{ '+' if total_unrealized_price_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_unrealized_price_pnl_jpy) }}</strong>
+                        </td>
+                        <td class="sensitive-data {{ 'text-success' if total_unrealized_fx_pnl_jpy >= 0 else 'text-danger' }}">
+                            <strong>{{ '+' if total_unrealized_fx_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_unrealized_fx_pnl_jpy) }}</strong>
+                        </td>
+                        <td class="sensitive-data {{ 'text-success' if total_today_pnl_jpy > 0 else 'text-danger' if total_today_pnl_jpy < 0 else '' }}">
+                            <strong>{{ '+' if total_today_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_today_pnl_jpy) }}</strong>
+                        </td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+        {% else %}
+        <p class="mb-0 text-muted">No open holdings to break down.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-lg-7 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0">Portfolio Value Over Time (JPY)</h4>
+            </div>
+            <div class="card-body">
+                <canvas id="valueHistoryChart" style="max-height: 300px;"></canvas>
+            </div>
+        </div>
+        <div class="card mt-4">
+            <div class="card-header">
+                <h4 class="mb-0">Unrealized P&amp;L Over Time (JPY)</h4>
+            </div>
+            <div class="card-body">
+                <canvas id="unrealizedHistoryChart" style="max-height: 170px;"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0">Portfolio Composition (by JPY Value)</h4>
+            </div>
+            <div class="card-body">
+                <canvas id="portfolioPieChart" style="max-height: 300px; max-width: 100%;"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="row mb-4">
     <div class="col-lg-7 mb-4">
         <div class="card h-100">
@@ -235,34 +357,151 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+    const stocks = {{ stocks|tojson }};
     const sectors = {{ health.sectors|tojson }};
-    const canvas = document.getElementById('sectorChart');
-    if (!canvas || !sectors || sectors.length === 0) return;
+    const historyData = {{ history_data|tojson }};
     const chartLegendPosition = window.innerWidth < 768 ? 'bottom' : 'right';
 
-    new Chart(canvas, {
-        type: 'doughnut',
-        data: {
-            labels: sectors.map(s => s.sector),
-            datasets: [{
-                data: sectors.map(s => s.value_jpy),
-                backgroundColor: [
-                    '#3dd6c6', '#7aa7ff', '#50d890', '#f7c948', '#ff6b7a',
-                    '#b48cff', '#38bdf8', '#f59e0b', '#f472b6', '#94a3b8'
-                ],
-                hoverOffset: 4
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    position: chartLegendPosition
+    function yenTick(value) {
+        return '\u00a5' + new Intl.NumberFormat('ja-JP').format(value);
+    }
+
+    function renderPortfolioComposition() {
+        const canvas = document.getElementById('portfolioPieChart');
+        if (!canvas) return;
+
+        if (!stocks || stocks.length === 0) {
+            canvas.parentElement.innerHTML = '<div class="text-center p-5 text-muted">No holdings to display.</div>';
+            return;
+        }
+
+        new Chart(canvas, {
+            type: 'pie',
+            data: {
+                labels: stocks.map(s => s.broker ? `${s.symbol} (${s.broker})` : s.symbol),
+                datasets: [{
+                    label: 'Value (JPY)',
+                    data: stocks.map(s => s.current_value_jpy),
+                    backgroundColor: [
+                        '#3dd6c6', '#7aa7ff', '#50d890', '#f7c948', '#ff6b7a',
+                        '#b48cff', '#38bdf8', '#f59e0b', '#f472b6', '#94a3b8'
+                    ],
+                    hoverOffset: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: chartLegendPosition
+                    }
                 }
             }
+        });
+    }
+
+    function renderHistoryCharts() {
+        if (!historyData || historyData.length === 0) return;
+
+        const valueCanvas = document.getElementById('valueHistoryChart');
+        const unrealizedCanvas = document.getElementById('unrealizedHistoryChart');
+        const labels = historyData.map(h => h.date);
+        const valueData = historyData.map(h => h.value_jpy);
+        const unrealizedData = historyData.map(h => h.unrealized_pnl_jpy);
+
+        if (valueCanvas) {
+            new Chart(valueCanvas, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Portfolio Value (JPY)',
+                        data: valueData,
+                        borderColor: '#3dd6c6',
+                        backgroundColor: 'rgba(61, 214, 198, 0.12)',
+                        fill: true,
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            ticks: {
+                                callback: yenTick
+                            }
+                        }
+                    }
+                }
+            });
         }
-    });
+
+        if (unrealizedCanvas && unrealizedData.some(value => value !== null && value !== undefined)) {
+            new Chart(unrealizedCanvas, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Unrealized P&L (JPY)',
+                        data: unrealizedData,
+                        borderColor: '#7aa7ff',
+                        backgroundColor: 'rgba(122, 167, 255, 0.12)',
+                        fill: true,
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: {
+                            ticks: {
+                                callback: yenTick
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    function renderSectorChart() {
+        const canvas = document.getElementById('sectorChart');
+        if (!canvas || !sectors || sectors.length === 0) return;
+
+        new Chart(canvas, {
+            type: 'doughnut',
+            data: {
+                labels: sectors.map(s => s.sector),
+                datasets: [{
+                    data: sectors.map(s => s.value_jpy),
+                    backgroundColor: [
+                        '#3dd6c6', '#7aa7ff', '#50d890', '#f7c948', '#ff6b7a',
+                        '#b48cff', '#38bdf8', '#f59e0b', '#f472b6', '#94a3b8'
+                    ],
+                    hoverOffset: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: chartLegendPosition
+                    }
+                }
+            }
+        });
+    }
+
+    renderPortfolioComposition();
+    renderHistoryCharts();
+    renderSectorChart();
 });
 </script>
 {% endblock %}

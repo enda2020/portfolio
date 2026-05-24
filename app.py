@@ -22,8 +22,8 @@ for proxy_var in ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https
 
 app = Flask(__name__)
 # Load the secret key from an environment variable for production.
-# The default value is only for local development and should not be used in production.
-app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'a_super_secret_key_for_flash_messages')
+# If it is missing locally, use an ephemeral key instead of a reusable hardcoded value.
+app.secret_key = os.environ.get('FLASK_SECRET_KEY') or secrets.token_urlsafe(32)
 
 # Get the absolute path of the directory where this script is located
 basedir = os.path.abspath(os.path.dirname(__file__))
@@ -964,6 +964,220 @@ def get_config_options():
     options['_rows'] = option_rows
     return options
 
+def _get_api_filters(args):
+    filters = {
+        'broker': args.get('broker', 'all'),
+        'currency': args.get('currency', 'all'),
+        'account_name': args.get('account_name', 'all'),
+        'tax_status': args.get('tax_status', 'all'),
+    }
+    effective_filters = {
+        key: value if value != 'all' else None
+        for key, value in filters.items()
+    }
+    return filters, effective_filters
+
+def _get_exchange_context():
+    exchange_data = get_exchange_rate()
+    using_fallback = exchange_data is None
+    if isinstance(exchange_data, dict):
+        exchange_rate = exchange_data['rate']
+        latest_data_at = exchange_data.get('latest_data_at')
+        latest_data_ago = _format_relative_time(exchange_data.get('latest_data_sort'))
+    else:
+        exchange_rate = exchange_data or 150.0
+        latest_data_at = None
+        latest_data_ago = None
+    return {
+        'exchange_data': exchange_data,
+        'exchange_rate': exchange_rate,
+        'using_fallback': using_fallback,
+        'latest_data_at': latest_data_at,
+        'latest_data_ago': latest_data_ago,
+    }
+
+def _get_history_data(days=365):
+    days = _parse_history_days(days)
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        history_rows = conn.execute(
+            "SELECT date, value_jpy, unrealized_pnl_jpy FROM portfolio_history ORDER BY date DESC LIMIT ?",
+            (days,)
+        ).fetchall()
+    return [dict(row) for row in reversed(history_rows)]
+
+def _parse_history_days(days=365):
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        days = 365
+    return max(1, min(days, 3650))
+
+def _get_available_tax_years():
+    with sqlite3.connect(DATABASE) as conn:
+        rows = conn.execute(
+            """
+            SELECT year FROM (
+                SELECT DISTINCT SUBSTR(trade_date, 1, 4) as year FROM trades
+                UNION
+                SELECT DISTINCT SUBSTR(trade_date, 1, 4) as year FROM mutual_fund_trades
+            ) ORDER BY year DESC
+            """
+        ).fetchall()
+    return [row[0] for row in rows if row[0]]
+
+def _summary_totals(summary):
+    return {
+        'value_usd': summary['total_value_usd'],
+        'value_jpy': summary['total_value_jpy'],
+        'today_pnl_usd': summary['total_today_pnl_usd'],
+        'today_pnl_jpy': summary['total_today_pnl_jpy'],
+        'realized_pnl_usd': summary['total_realized_pnl_usd'],
+        'realized_pnl_jpy': summary['total_realized_pnl_jpy'],
+        'unrealized_pnl_usd': summary['total_unrealized_pnl_usd'],
+        'unrealized_pnl_jpy': summary['total_unrealized_pnl_jpy'],
+        'unrealized_price_pnl_jpy': summary['total_unrealized_price_pnl_jpy'],
+        'unrealized_fx_pnl_jpy': summary['total_unrealized_fx_pnl_jpy'],
+        'realized_price_pnl_jpy': summary['total_realized_price_pnl_jpy'],
+        'realized_fx_pnl_jpy': summary['total_realized_fx_pnl_jpy'],
+        'total_pnl_jpy': summary['total_pnl_jpy'],
+        'total_price_pnl_jpy': summary['total_price_pnl_jpy'],
+        'total_fx_pnl_jpy': summary['total_fx_pnl_jpy'],
+    }
+
+def _api_meta(summary, filters, exchange_context):
+    return {
+        'generated_at': _portfolio_now().strftime('%Y-%m-%d %H:%M:%S'),
+        'portfolio_day': _portfolio_day_str(),
+        'filters': filters,
+        'exchange_rate': exchange_context['exchange_rate'],
+        'fx_latest_data_at': exchange_context['latest_data_at'],
+        'fx_latest_data_ago': exchange_context['latest_data_ago'],
+        'fx_using_fallback': exchange_context['using_fallback'],
+        'market_data_complete': summary['market_data_complete'],
+        'oldest_market_data_at': summary['oldest_market_data_at'],
+        'latest_market_data_at': summary['latest_market_data_at'],
+        'oldest_market_data_ago': summary['oldest_market_data_ago'],
+        'latest_market_data_ago': summary['latest_market_data_ago'],
+    }
+
+def _build_portfolio_api_payload(include_history=False, history_days=365):
+    filters, effective_filters = _get_api_filters(request.args)
+    exchange_context = _get_exchange_context()
+    trades = _fetch_normalized_trades()
+    summary = _calculate_portfolio_summary(
+        trades,
+        exchange_context['exchange_rate'],
+        effective_filters['broker'],
+        effective_filters['currency'],
+        effective_filters['account_name'],
+        effective_filters['tax_status']
+    )
+    payload = {
+        **summary,
+        'meta': _api_meta(summary, filters, exchange_context),
+        'filters': filters,
+        'totals': _summary_totals(summary),
+        'holdings': summary['stocks'],
+    }
+    if include_history:
+        payload['history'] = _get_history_data(history_days)
+    return payload, summary, trades, exchange_context, filters
+
+def _json_to_form_payload(payload):
+    """Converts JSON request bodies to the string-like shape used by form validators."""
+    payload = payload or {}
+    return {
+        key: '' if value is None else str(value)
+        for key, value in payload.items()
+    }
+
+def _insert_stock_trade(values):
+    with sqlite3.connect(DATABASE) as conn:
+        cursor = conn.execute(
+            'INSERT INTO trades (symbol, name, trade_type, quantity, price, currency, trade_date, broker, account_name, tax_status, fx_rate, fee_amount, fee_currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            (
+                values['symbol'],
+                values['name'],
+                values['trade_type'],
+                values['quantity'],
+                values['price'],
+                values['currency'],
+                values['trade_date'],
+                values['broker'],
+                values['account_name'],
+                values['tax_status'],
+                values['fx_rate'],
+                values['fee_amount'],
+                values['fee_currency']
+            )
+        )
+        return cursor.lastrowid
+
+def _insert_mutual_fund_trade(values):
+    with sqlite3.connect(DATABASE) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO mutual_fund_trades (
+                fund_code, fund_name, transaction_type, transaction_detail,
+                account_type, account_name, tax_status, currency, executed_units, nav_per_10000,
+                trade_date, settlement_date, settlement_amount, broker, fx_rate
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                values['fund_code'],
+                values['fund_name'],
+                values['transaction_type'],
+                values['transaction_detail'],
+                values['account_type'],
+                values['account_name'],
+                values['tax_status'],
+                values['currency'],
+                values['executed_units'],
+                values['nav_per_10000'],
+                values['trade_date'],
+                values['settlement_date'],
+                values['settlement_amount'],
+                values['broker'],
+                values['fx_rate']
+            )
+        )
+        return cursor.lastrowid
+
+def _stock_trade_api_row(row):
+    trade = dict(row)
+    trade['instrument_type'] = 'stock'
+    trade['days_since_purchase'] = None
+    trade['sell_allowed'] = None
+    if trade.get('trade_type') == 'BUY':
+        try:
+            purchase_date = datetime.strptime(trade['trade_date'], '%Y-%m-%d').date()
+            trade['days_since_purchase'] = max(0, (_portfolio_now().date() - purchase_date).days)
+            trade['sell_allowed'] = trade['days_since_purchase'] >= 30
+        except (TypeError, ValueError):
+            pass
+    return trade
+
+def _mutual_fund_trade_api_row(row):
+    trade = dict(row)
+    trade['instrument_type'] = 'mutual_fund'
+    trade['symbol'] = trade['fund_code']
+    trade['name'] = trade['fund_name']
+    trade['trade_type'] = trade['transaction_type']
+    trade['quantity'] = trade['executed_units']
+    trade['price'] = trade['nav_per_10000']
+    return trade
+
+def _fetch_stock_trade_row(trade_id):
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        return conn.execute('SELECT * FROM trades WHERE id = ?', (trade_id,)).fetchone()
+
+def _fetch_mutual_fund_trade_row(trade_id):
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        return conn.execute('SELECT * FROM mutual_fund_trades WHERE id = ?', (trade_id,)).fetchone()
+
 def _parse_config_option_form(form):
     category = (form.get('category', '') or '').strip()
     value = (form.get('value', '') or '').strip()
@@ -1723,15 +1937,7 @@ def index():
         if market_data_reliable and summary['market_data_complete']:
             _ensure_history_updated(summary)
 
-    # 4. Get the history data for the chart (now includes today's correct value).
-    with sqlite3.connect(DATABASE) as conn:
-        conn.row_factory = sqlite3.Row
-        # Fetch the latest 365 days for the chart
-        history_rows = conn.execute("SELECT date, value_jpy, unrealized_pnl_jpy FROM portfolio_history ORDER BY date DESC LIMIT 365").fetchall()
-        # Reverse the list so the chart shows oldest to newest
-        history_data = [dict(row) for row in reversed(history_rows)]
-
-    # 5. Render the page
+    # 4. Render the page
     prices_last_updated = _portfolio_now().strftime('%Y-%m-%d %H:%M')
     config_options = get_config_options()
     return render_template('index.html', 
@@ -1741,7 +1947,6 @@ def index():
                            prices_last_updated_ago='just now',
                            fx_latest_data_at=fx_latest_data_at,
                            fx_latest_data_ago=fx_latest_data_ago,
-                           history_data=history_data, 
                            brokers=config_options['broker'],
                            account_names=config_options['account_name'],
                            tax_statuses=config_options['tax_status'],
@@ -1773,6 +1978,10 @@ def portfolio_health():
     settings = get_health_settings()
     health = _calculate_portfolio_health(summary, settings)
     performance = _calculate_portfolio_performance(summary, trades, exchange_rate)
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        history_rows = conn.execute("SELECT date, value_jpy, unrealized_pnl_jpy FROM portfolio_history ORDER BY date DESC LIMIT 365").fetchall()
+        history_data = [dict(row) for row in reversed(history_rows)]
     prices_last_updated = _portfolio_now().strftime('%Y-%m-%d %H:%M')
 
     return render_template(
@@ -1780,6 +1989,7 @@ def portfolio_health():
         **summary,
         health=health,
         performance=performance,
+        history_data=history_data,
         exchange_rate=exchange_rate,
         fx_latest_data_at=fx_latest_data_at,
         fx_latest_data_ago=fx_latest_data_ago,
@@ -1902,39 +2112,393 @@ def app_config():
 def api_portfolio():
     """
     API endpoint to return portfolio summary as JSON.
-    Accepts 'broker' and 'currency' query parameters for filtering.
+    Accepts broker, currency, account_name, tax_status, include_history, and history_days query parameters.
     """
-    # 1. Get filters and raw data
-    broker_filter = request.args.get('broker', 'all')
-    currency_filter = request.args.get('currency', 'all')
-    account_name_filter = request.args.get('account_name', 'all')
-    tax_status_filter = request.args.get('tax_status', 'all')
-
-    # Convert 'all' to None for the calculation function, which expects None for no filter
-    effective_broker_filter = broker_filter if broker_filter != 'all' else None
-    effective_currency_filter = currency_filter if currency_filter != 'all' else None
-    effective_account_name_filter = account_name_filter if account_name_filter != 'all' else None
-    effective_tax_status_filter = tax_status_filter if tax_status_filter != 'all' else None
-
-    exchange_data = get_exchange_rate()
-    if exchange_data is None:
-        return jsonify({'error': 'Live USD/JPY exchange rate is unavailable.'}), 503
-    exchange_rate = exchange_data['rate'] if isinstance(exchange_data, dict) else exchange_data
-
-    trades = _fetch_normalized_trades()
-
-    # 2. Perform the main calculation with filters.
-    summary = _calculate_portfolio_summary(
-        trades,
-        exchange_rate,
-        effective_broker_filter,
-        effective_currency_filter,
-        effective_account_name_filter,
-        effective_tax_status_filter
+    include_history = request.args.get('include_history', '').lower() in ['1', 'true', 'yes']
+    payload, *_ = _build_portfolio_api_payload(
+        include_history=include_history,
+        history_days=request.args.get('history_days', 365)
     )
-    
-    # 3. Return as JSON
-    return jsonify(summary)
+    return jsonify(payload)
+
+@app.route('/api/health')
+def api_health():
+    """API endpoint for health score, performance, P&L breakdown, and allocations."""
+    _, summary, trades, exchange_context, filters = _build_portfolio_api_payload()
+    settings = get_health_settings()
+    health = _calculate_portfolio_health(summary, settings)
+    performance = _calculate_portfolio_performance(summary, trades, exchange_context['exchange_rate'])
+    return jsonify({
+        'meta': _api_meta(summary, filters, exchange_context),
+        'totals': _summary_totals(summary),
+        'health': health,
+        'performance': performance,
+        'pnl_breakdown': {
+            'overall_jpy': summary['total_pnl_jpy'],
+            'price_instrument_jpy': summary['total_price_pnl_jpy'],
+            'fx_impact_jpy': summary['total_fx_pnl_jpy'],
+            'open_holdings': [
+                {
+                    'symbol': stock['symbol'],
+                    'name': stock['name'],
+                    'broker': stock['broker'],
+                    'currency': stock['currency'],
+                    'instrument_type': stock['instrument_type'],
+                    'weight_percent': stock.get('weight_percent'),
+                    'current_value_jpy': stock['current_value_jpy'],
+                    'total_pnl_jpy': stock['pnl_jpy'],
+                    'price_instrument_pnl_jpy': stock['price_pnl_jpy'],
+                    'fx_pnl_jpy': stock['fx_pnl_jpy'],
+                    'today_pnl_jpy': stock['today_pnl_jpy'],
+                }
+                for stock in health['stocks']
+            ],
+        },
+    })
+
+@app.route('/api/history')
+def api_history():
+    """API endpoint for portfolio history chart data."""
+    days = _parse_history_days(request.args.get('days', 365))
+    return jsonify({
+        'meta': {
+            'generated_at': _portfolio_now().strftime('%Y-%m-%d %H:%M:%S'),
+            'portfolio_day': _portfolio_day_str(),
+            'days': days,
+        },
+        'history': _get_history_data(days),
+    })
+
+@app.route('/api/tax-report')
+def api_tax_report():
+    """API endpoint for Japanese tax report calculations."""
+    year = request.args.get('year')
+    if not year:
+        available_years = _get_available_tax_years()
+        year = available_years[0] if available_years else str(_portfolio_day().year)
+    try:
+        year_int = int(year)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'year must be a valid four-digit year'}), 400
+
+    broker = request.args.get('broker', 'all')
+    account_name = request.args.get('account_name', 'all')
+    tax_status = request.args.get('tax_status', 'all')
+    report = generate_tax_report_data(
+        year_int,
+        broker if broker != 'all' else None,
+        account_name if account_name != 'all' else None,
+        tax_status if tax_status != 'all' else None
+    )
+    return jsonify({
+        'meta': {
+            'generated_at': _portfolio_now().strftime('%Y-%m-%d %H:%M:%S'),
+            'filters': {
+                'year': year_int,
+                'broker': broker,
+                'account_name': account_name,
+                'tax_status': tax_status,
+            },
+        },
+        **report,
+    })
+
+@app.route('/api/options')
+def api_options():
+    """API endpoint for filter options and available report years."""
+    config_options = get_config_options()
+    return jsonify({
+        'brokers': config_options['broker'],
+        'account_names': config_options['account_name'],
+        'tax_statuses': config_options['tax_status'],
+        'currencies': ['USD', 'JPY'],
+        'available_tax_years': _get_available_tax_years(),
+        'health_settings': get_health_settings(),
+    })
+
+def _openapi_spec():
+    return {
+        'openapi': '3.1.0',
+        'info': {
+            'title': 'Portfolio Tracker API',
+            'version': APP_VERSION,
+            'description': 'Machine-readable API for portfolio summary, health, history, tax report, options, and version data.',
+        },
+        'servers': [{'url': '/'}],
+        'paths': {
+            '/api/portfolio': {
+                'get': {
+                    'summary': 'Get enriched portfolio summary',
+                    'parameters': [
+                        {'name': 'broker', 'in': 'query', 'schema': {'type': 'string', 'default': 'all'}},
+                        {'name': 'currency', 'in': 'query', 'schema': {'type': 'string', 'enum': ['all', 'USD', 'JPY'], 'default': 'all'}},
+                        {'name': 'account_name', 'in': 'query', 'schema': {'type': 'string', 'default': 'all'}},
+                        {'name': 'tax_status', 'in': 'query', 'schema': {'type': 'string', 'default': 'all'}},
+                        {'name': 'include_history', 'in': 'query', 'schema': {'type': 'boolean', 'default': False}},
+                        {'name': 'history_days', 'in': 'query', 'schema': {'type': 'integer', 'default': 365, 'minimum': 1, 'maximum': 3650}},
+                    ],
+                    'responses': {'200': {'description': 'Portfolio summary'}},
+                }
+            },
+            '/api/health': {
+                'get': {
+                    'summary': 'Get portfolio health, performance, allocation, and P&L breakdown',
+                    'parameters': [
+                        {'name': 'broker', 'in': 'query', 'schema': {'type': 'string', 'default': 'all'}},
+                        {'name': 'currency', 'in': 'query', 'schema': {'type': 'string', 'enum': ['all', 'USD', 'JPY'], 'default': 'all'}},
+                        {'name': 'account_name', 'in': 'query', 'schema': {'type': 'string', 'default': 'all'}},
+                        {'name': 'tax_status', 'in': 'query', 'schema': {'type': 'string', 'default': 'all'}},
+                    ],
+                    'responses': {'200': {'description': 'Health payload'}},
+                }
+            },
+            '/api/history': {
+                'get': {
+                    'summary': 'Get portfolio history chart rows',
+                    'parameters': [
+                        {'name': 'days', 'in': 'query', 'schema': {'type': 'integer', 'default': 365, 'minimum': 1, 'maximum': 3650}},
+                    ],
+                    'responses': {'200': {'description': 'History rows'}},
+                }
+            },
+            '/api/tax-report': {
+                'get': {
+                    'summary': 'Get Japanese tax report data',
+                    'parameters': [
+                        {'name': 'year', 'in': 'query', 'schema': {'type': 'integer'}},
+                        {'name': 'broker', 'in': 'query', 'schema': {'type': 'string', 'default': 'all'}},
+                        {'name': 'account_name', 'in': 'query', 'schema': {'type': 'string', 'default': 'all'}},
+                        {'name': 'tax_status', 'in': 'query', 'schema': {'type': 'string', 'default': 'all'}},
+                    ],
+                    'responses': {'200': {'description': 'Tax report payload'}, '400': {'description': 'Invalid year'}},
+                }
+            },
+            '/api/options': {
+                'get': {
+                    'summary': 'Get filter options and settings',
+                    'responses': {'200': {'description': 'Available options'}},
+                }
+            },
+            '/api/trades': {
+                'get': {
+                    'summary': 'Get combined trade-level data',
+                    'parameters': [
+                        {'name': 'instrument_type', 'in': 'query', 'schema': {'type': 'string', 'enum': ['all', 'stock', 'mutual_fund'], 'default': 'all'}},
+                        {'name': 'limit', 'in': 'query', 'schema': {'type': 'integer', 'minimum': 1, 'maximum': 10000}},
+                    ],
+                    'responses': {'200': {'description': 'Combined stock and mutual fund trades'}, '400': {'description': 'Invalid query parameter'}},
+                }
+            },
+            '/api/trades/stocks': {
+                'get': {
+                    'summary': 'List stock and ETF trades',
+                    'responses': {'200': {'description': 'Stock trade rows'}},
+                },
+                'post': {
+                    'summary': 'Create a stock or ETF trade',
+                    'requestBody': {
+                        'required': True,
+                        'content': {
+                            'application/json': {
+                                'schema': {
+                                    'type': 'object',
+                                    'required': ['symbol', 'name', 'trade_type', 'quantity', 'price', 'currency', 'trade_date', 'broker', 'account_name', 'tax_status'],
+                                    'properties': {
+                                        'symbol': {'type': 'string', 'example': 'VOO'},
+                                        'name': {'type': 'string', 'example': 'Vanguard S&P 500 ETF'},
+                                        'trade_type': {'type': 'string', 'enum': ['BUY', 'SELL']},
+                                        'quantity': {'type': 'number', 'exclusiveMinimum': 0},
+                                        'price': {'type': 'number', 'minimum': 0},
+                                        'currency': {'type': 'string', 'enum': ['USD', 'JPY']},
+                                        'trade_date': {'type': 'string', 'format': 'date'},
+                                        'broker': {'type': 'string'},
+                                        'account_name': {'type': 'string'},
+                                        'tax_status': {'type': 'string'},
+                                        'fx_rate': {'type': ['number', 'null'], 'exclusiveMinimum': 0},
+                                        'fee_amount': {'type': ['number', 'null'], 'minimum': 0},
+                                        'fee_currency': {'type': ['string', 'null'], 'enum': ['USD', 'JPY', None]},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    'responses': {'201': {'description': 'Stock trade created'}, '400': {'description': 'Validation errors'}, '415': {'description': 'JSON required'}},
+                },
+            },
+            '/api/trades/stocks/{trade_id}': {
+                'get': {
+                    'summary': 'Get one stock or ETF trade',
+                    'parameters': [{'name': 'trade_id', 'in': 'path', 'required': True, 'schema': {'type': 'integer'}}],
+                    'responses': {'200': {'description': 'Stock trade row'}, '404': {'description': 'Trade not found'}},
+                }
+            },
+            '/api/trades/mutual-funds': {
+                'get': {
+                    'summary': 'List mutual fund trades',
+                    'responses': {'200': {'description': 'Mutual fund trade rows'}},
+                },
+                'post': {
+                    'summary': 'Create a mutual fund trade',
+                    'requestBody': {
+                        'required': True,
+                        'content': {
+                            'application/json': {
+                                'schema': {
+                                    'type': 'object',
+                                    'required': ['fund_code', 'fund_name', 'transaction_type', 'executed_units', 'nav_per_10000', 'trade_date', 'broker', 'account_name', 'tax_status'],
+                                    'properties': {
+                                        'fund_code': {'type': 'string', 'example': '0331418A'},
+                                        'fund_name': {'type': 'string'},
+                                        'transaction_type': {'type': 'string', 'enum': ['BUY', 'SELL']},
+                                        'executed_units': {'type': 'number', 'exclusiveMinimum': 0},
+                                        'nav_per_10000': {'type': 'number', 'minimum': 0},
+                                        'trade_date': {'type': 'string', 'format': 'date'},
+                                        'broker': {'type': 'string'},
+                                        'account_name': {'type': 'string'},
+                                        'tax_status': {'type': 'string'},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    'responses': {'201': {'description': 'Mutual fund trade created'}, '400': {'description': 'Validation errors'}, '415': {'description': 'JSON required'}},
+                },
+            },
+            '/api/trades/mutual-funds/{trade_id}': {
+                'get': {
+                    'summary': 'Get one mutual fund trade',
+                    'parameters': [{'name': 'trade_id', 'in': 'path', 'required': True, 'schema': {'type': 'integer'}}],
+                    'responses': {'200': {'description': 'Mutual fund trade row'}, '404': {'description': 'Trade not found'}},
+                }
+            },
+            '/api/version': {
+                'get': {
+                    'summary': 'Get application version status',
+                    'responses': {'200': {'description': 'Version status'}},
+                }
+            },
+            '/api/openapi.json': {
+                'get': {
+                    'summary': 'Get this OpenAPI document',
+                    'responses': {'200': {'description': 'OpenAPI document'}},
+                }
+            },
+        },
+    }
+
+@app.route('/api/openapi.json')
+def api_openapi():
+    return jsonify(_openapi_spec())
+
+@app.route('/api/trades')
+def api_trades():
+    """API endpoint for trade-level stock and mutual fund data."""
+    instrument_type = request.args.get('instrument_type', 'all')
+    limit = request.args.get('limit')
+    try:
+        limit = int(limit) if limit else None
+    except ValueError:
+        return jsonify({'error': 'limit must be an integer'}), 400
+    if limit is not None:
+        limit = max(1, min(limit, 10000))
+
+    stock_trades = []
+    mutual_fund_trades = []
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        if instrument_type in ['all', 'stock']:
+            query = 'SELECT * FROM trades ORDER BY trade_date DESC, id DESC'
+            if limit:
+                query += ' LIMIT ?'
+                stock_rows = conn.execute(query, (limit,)).fetchall()
+            else:
+                stock_rows = conn.execute(query).fetchall()
+            stock_trades = [_stock_trade_api_row(row) for row in stock_rows]
+        if instrument_type in ['all', 'mutual_fund']:
+            query = 'SELECT * FROM mutual_fund_trades ORDER BY trade_date DESC, id DESC'
+            if limit:
+                query += ' LIMIT ?'
+                fund_rows = conn.execute(query, (limit,)).fetchall()
+            else:
+                fund_rows = conn.execute(query).fetchall()
+            mutual_fund_trades = [_mutual_fund_trade_api_row(row) for row in fund_rows]
+
+    if instrument_type not in ['all', 'stock', 'mutual_fund']:
+        return jsonify({'error': 'instrument_type must be all, stock, or mutual_fund'}), 400
+
+    combined_trades = sorted(
+        stock_trades + mutual_fund_trades,
+        key=lambda trade: (trade.get('trade_date') or '', trade.get('id') or 0),
+        reverse=True
+    )
+    if limit and instrument_type == 'all':
+        combined_trades = combined_trades[:limit]
+
+    return jsonify({
+        'meta': {
+            'generated_at': _portfolio_now().strftime('%Y-%m-%d %H:%M:%S'),
+            'instrument_type': instrument_type,
+            'limit': limit,
+            'count': len(combined_trades),
+        },
+        'trades': combined_trades,
+        'stock_trades': stock_trades,
+        'mutual_fund_trades': mutual_fund_trades,
+    })
+
+@app.route('/api/trades/stocks', methods=['GET', 'POST'])
+def api_stock_trades():
+    """API endpoint to list or create stock/ETF trades."""
+    if request.method == 'GET':
+        with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute('SELECT * FROM trades ORDER BY trade_date DESC, id DESC').fetchall()
+        trades = [_stock_trade_api_row(row) for row in rows]
+        return jsonify({'count': len(trades), 'trades': trades})
+
+    if not request.is_json:
+        return jsonify({'error': 'Request body must be JSON'}), 415
+    values, errors = _parse_trade_form(_json_to_form_payload(request.get_json(silent=True)))
+    if errors:
+        return jsonify({'errors': errors}), 400
+    trade_id = _insert_stock_trade(values)
+    row = _fetch_stock_trade_row(trade_id)
+    return jsonify({'message': 'Stock trade created.', 'trade': _stock_trade_api_row(row)}), 201
+
+@app.route('/api/trades/stocks/<int:trade_id>')
+def api_stock_trade(trade_id):
+    """API endpoint to retrieve one stock/ETF trade."""
+    row = _fetch_stock_trade_row(trade_id)
+    if row is None:
+        return jsonify({'error': 'Stock trade not found'}), 404
+    return jsonify(_stock_trade_api_row(row))
+
+@app.route('/api/trades/mutual-funds', methods=['GET', 'POST'])
+def api_mutual_fund_trades():
+    """API endpoint to list or create mutual fund trades."""
+    if request.method == 'GET':
+        with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute('SELECT * FROM mutual_fund_trades ORDER BY trade_date DESC, id DESC').fetchall()
+        trades = [_mutual_fund_trade_api_row(row) for row in rows]
+        return jsonify({'count': len(trades), 'trades': trades})
+
+    if not request.is_json:
+        return jsonify({'error': 'Request body must be JSON'}), 415
+    values, errors = _parse_mutual_fund_trade_form(_json_to_form_payload(request.get_json(silent=True)))
+    if errors:
+        return jsonify({'errors': errors}), 400
+    trade_id = _insert_mutual_fund_trade(values)
+    row = _fetch_mutual_fund_trade_row(trade_id)
+    return jsonify({'message': 'Mutual fund trade created.', 'trade': _mutual_fund_trade_api_row(row)}), 201
+
+@app.route('/api/trades/mutual-funds/<int:trade_id>')
+def api_mutual_fund_trade(trade_id):
+    """API endpoint to retrieve one mutual fund trade."""
+    row = _fetch_mutual_fund_trade_row(trade_id)
+    if row is None:
+        return jsonify({'error': 'Mutual fund trade not found'}), 404
+    return jsonify(_mutual_fund_trade_api_row(row))
 
 @app.route('/api/version')
 def api_version():
