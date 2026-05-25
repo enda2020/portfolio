@@ -266,6 +266,122 @@
     </div>
 </div>
 
+<div class="card mb-4 watchlist-card">
+    <div class="card-header">
+        <h4>Watch List</h4>
+    </div>
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('add_watchlist_item') }}" class="watchlist-add-form mb-4">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="watchlist-add-grid">
+                <div>
+                    <label class="form-label" for="watch-symbol">Symbol</label>
+                    <input id="watch-symbol" class="form-control" name="symbol" placeholder="AAPL" required>
+                </div>
+                <div>
+                    <label class="form-label" for="watch-name">Name</label>
+                    <input id="watch-name" class="form-control" name="name" placeholder="Apple">
+                </div>
+                <div>
+                    <label class="form-label" for="watch-currency">Currency</label>
+                    <select id="watch-currency" class="form-select" name="currency" required>
+                        <option value="USD">USD</option>
+                        <option value="JPY">JPY</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="form-label" for="watch-target">Target</label>
+                    <input id="watch-target" class="form-control" name="target_price" type="number" min="0" step="0.01" placeholder="Alert above">
+                </div>
+                <div>
+                    <label class="form-label" for="watch-stop">Stop</label>
+                    <input id="watch-stop" class="form-control" name="stop_price" type="number" min="0" step="0.01" placeholder="Alert below">
+                </div>
+                <div class="watchlist-notes-input">
+                    <label class="form-label" for="watch-notes">Notes</label>
+                    <input id="watch-notes" class="form-control" name="notes" placeholder="Idea, thesis, reminder">
+                </div>
+                <div class="watchlist-add-action">
+                    <button class="btn btn-primary w-100" type="submit">
+                        <i class="fas fa-plus me-1"></i> Add
+                    </button>
+                </div>
+            </div>
+        </form>
+
+        {% if watchlist %}
+            <div class="watchlist-items">
+                {% for item in watchlist %}
+                {% set item_symbol = '&yen;'|safe if item.currency == 'JPY' else '$' %}
+                <div class="watchlist-item">
+                    <div class="watchlist-summary">
+                        <div class="watchlist-name">
+                            <strong>{{ item.symbol }}</strong>
+                            {% if item.name %}<span>{{ item.name }}</span>{% endif %}
+                        </div>
+                        <div class="watchlist-price">
+                            {% if item.current_price is not none %}
+                                <span class="sensitive-data">{{ item_symbol }}{{ "{:,.2f}".format(item.current_price) }}</span>
+                                <small class="{{ 'text-success' if item.change_today > 0 else 'text-danger' if item.change_today < 0 else 'text-muted' }}">
+                                    {{ "{:+,.2f}".format(item.change_today) }}
+                                </small>
+                            {% else %}
+                                <span class="text-muted">No quote</span>
+                            {% endif %}
+                        </div>
+                        <div class="watchlist-alerts">
+                            {% if item.alert_state == 'target' %}
+                                <span class="badge watchlist-alert-target">Target hit</span>
+                            {% elif item.alert_state == 'stop' %}
+                                <span class="badge watchlist-alert-stop">Stop hit</span>
+                            {% else %}
+                                <span class="badge bg-info">Tracking</span>
+                            {% endif %}
+                        </div>
+                        <button class="btn btn-sm btn-outline-info watchlist-edit-toggle" type="button" data-bs-toggle="collapse" data-bs-target="#watchlist-edit-{{ item.id }}" aria-expanded="false" aria-controls="watchlist-edit-{{ item.id }}" title="Edit watch details">
+                            <i class="fas fa-pen"></i>
+                        </button>
+                    </div>
+                    <div class="watchlist-meta">
+                        {% if item.target_price is not none %}<span>Target <span class="sensitive-data">{{ item_symbol }}{{ "{:,.2f}".format(item.target_price) }}</span></span>{% endif %}
+                        {% if item.stop_price is not none %}<span>Stop <span class="sensitive-data">{{ item_symbol }}{{ "{:,.2f}".format(item.stop_price) }}</span></span>{% endif %}
+                        {% if item.notes %}<span>{{ item.notes }}</span>{% endif %}
+                        {% if item.latest_data_at %}<span>Quote {{ item.latest_data_at }}</span>{% endif %}
+                    </div>
+                    <div class="collapse" id="watchlist-edit-{{ item.id }}">
+                        <form method="POST" action="{{ url_for('update_watchlist_item', item_id=item.id) }}" class="watchlist-edit-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <div class="watchlist-edit-grid">
+                                <input class="form-control" name="symbol" value="{{ item.symbol }}" required aria-label="Symbol">
+                                <input class="form-control" name="name" value="{{ item.name or '' }}" aria-label="Name">
+                                <select class="form-select" name="currency" required aria-label="Currency">
+                                    <option value="USD" {% if item.currency == 'USD' %}selected{% endif %}>USD</option>
+                                    <option value="JPY" {% if item.currency == 'JPY' %}selected{% endif %}>JPY</option>
+                                </select>
+                                <input class="form-control" name="target_price" type="number" min="0" step="0.01" value="{{ item.target_price if item.target_price is not none else '' }}" placeholder="Target" aria-label="Target">
+                                <input class="form-control" name="stop_price" type="number" min="0" step="0.01" value="{{ item.stop_price if item.stop_price is not none else '' }}" placeholder="Stop" aria-label="Stop">
+                                <input class="form-control watchlist-edit-notes" name="notes" value="{{ item.notes or '' }}" placeholder="Notes" aria-label="Notes">
+                                <button class="btn btn-primary" type="submit" title="Save">
+                                    <i class="fas fa-save"></i>
+                                </button>
+                            </div>
+                        </form>
+                        <form method="POST" action="{{ url_for('delete_watchlist_item', item_id=item.id) }}" class="watchlist-delete-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button class="btn btn-sm btn-outline-danger" type="submit">
+                                <i class="fas fa-trash me-1"></i> Remove
+                            </button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="text-muted watchlist-empty">No watch names yet.</div>
+        {% endif %}
+    </div>
+</div>
+
 <script>
 document.addEventListener('DOMContentLoaded', function () {
     const brokerFilter = document.getElementById('brokerFilter');

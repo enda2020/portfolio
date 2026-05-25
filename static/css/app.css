@@ -332,6 +332,105 @@ h1 {
   background: rgba(255, 255, 255, 0.018);
 }
 
+.watchlist-add-grid,
+.watchlist-edit-grid {
+  align-items: end;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.watchlist-add-grid {
+  grid-template-columns: 1.1fr 1.25fr 0.75fr 0.9fr 0.9fr minmax(12rem, 1.5fr) auto;
+}
+
+.watchlist-edit-grid {
+  grid-template-columns: 1fr 1.15fr 0.75fr 0.85fr 0.85fr minmax(12rem, 1.4fr) auto;
+}
+
+.watchlist-add-action .btn,
+.watchlist-edit-grid .btn {
+  min-width: 3rem;
+}
+
+.watchlist-items {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.watchlist-item {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 0.85rem;
+}
+
+.watchlist-summary {
+  align-items: center;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(8rem, 1.4fr) minmax(7rem, 0.8fr) minmax(6rem, 0.7fr) auto;
+}
+
+.watchlist-name {
+  min-width: 0;
+}
+
+.watchlist-name strong,
+.watchlist-name span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.watchlist-name span,
+.watchlist-price small,
+.watchlist-meta {
+  color: var(--app-muted);
+}
+
+.watchlist-price {
+  display: grid;
+  font-weight: 720;
+  gap: 0.15rem;
+  justify-items: start;
+}
+
+.watchlist-alerts {
+  justify-self: start;
+}
+
+.watchlist-alert-target {
+  background: rgba(80, 216, 144, 0.16);
+  color: #baf5d3;
+}
+
+.watchlist-alert-stop {
+  background: rgba(255, 107, 122, 0.16);
+  color: #ffd0d6;
+}
+
+.watchlist-meta {
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  gap: 0.45rem 0.9rem;
+  margin-top: 0.65rem;
+}
+
+.watchlist-edit-form {
+  margin-top: 0.75rem;
+}
+
+.watchlist-delete-form {
+  margin-top: 0.65rem;
+}
+
+.watchlist-empty {
+  border: 1px dashed var(--app-border);
+  border-radius: 8px;
+  padding: 1rem;
+  text-align: center;
+}
+
 .pnl-breakdown-table td,
 .pnl-breakdown-table th {
   white-space: nowrap;
@@ -552,9 +651,28 @@ canvas {
   }
 
   .holdings-table th:last-child,
-  .holdings-table td:last-child {
+  .holdings-table .holding-row td:last-child,
+  .holdings-table tfoot td:last-child {
     text-align: right;
     white-space: nowrap;
+  }
+
+  .holding-detail-row > td,
+  .holding-detail,
+  .holding-detail .row,
+  .holding-detail .table {
+    text-align: left;
+  }
+
+  .watchlist-add-grid,
+  .watchlist-edit-grid,
+  .watchlist-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .watchlist-alerts,
+  .watchlist-edit-toggle {
+    justify-self: stretch;
   }
 
   .btn {

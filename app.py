@@ -666,6 +666,63 @@ def _parse_optional_float(value):
     value = (value or '').strip()
     return float(value) if value else None
 
+def _parse_watchlist_form(form):
+    errors = []
+    values = {
+        'symbol': form.get('symbol', '').strip().upper(),
+        'name': form.get('name', '').strip(),
+        'currency': form.get('currency', '').strip().upper(),
+        'target_price': None,
+        'stop_price': None,
+        'notes': form.get('notes', '').strip(),
+    }
+
+    if not values['symbol']:
+        errors.append("Symbol is required.")
+    if not values['currency']:
+        errors.append("Currency is required.")
+    elif values['currency'] not in ['USD', 'JPY']:
+        errors.append("Currency must be USD or JPY.")
+
+    for field, label in [('target_price', 'Target price'), ('stop_price', 'Stop price')]:
+        try:
+            values[field] = _parse_optional_float(form.get(field))
+            if values[field] is not None and values[field] < 0:
+                errors.append(f"{label} cannot be negative.")
+        except ValueError:
+            errors.append(f"{label} must be a valid number.")
+
+    return values, errors
+
+def _fetch_watchlist():
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute('''
+            SELECT *
+            FROM watchlist
+            ORDER BY created_at DESC, id DESC
+        ''').fetchall()
+
+    portfolio_day = _portfolio_day()
+    items = []
+    for row in rows:
+        item = dict(row)
+        market_data = get_market_price(item['symbol'], item['currency'])
+        item['current_price'] = market_data.get('current_price') if market_data.get('is_valid') else None
+        item['change_today'] = market_data.get('change_today', 0.0) if market_data.get('is_valid') else 0.0
+        if not _is_daily_change_current(market_data.get('change_date'), portfolio_day):
+            item['change_today'] = 0.0
+        item['latest_data_at'] = market_data.get('latest_data_at')
+        item['quote_session'] = market_data.get('quote_session', 'regular')
+        item['alert_state'] = None
+        if item['current_price'] is not None:
+            if item.get('target_price') is not None and item['current_price'] >= item['target_price']:
+                item['alert_state'] = 'target'
+            elif item.get('stop_price') is not None and item['current_price'] <= item['stop_price']:
+                item['alert_state'] = 'stop'
+        items.append(item)
+    return items
+
 def _row_get(row, key, default=None):
     if row is None:
         return default
@@ -853,6 +910,102 @@ def _parse_mutual_fund_trade_form(form):
         datetime.strptime(values['trade_date'], '%Y-%m-%d')
     except ValueError:
         errors.append("Trade date must be in YYYY-MM-DD format.")
+
+    return values, errors
+
+def _parse_dividend_form(form):
+    config_options = get_config_options()
+    errors = []
+    values = {
+        'symbol': form.get('symbol', '').strip().upper(),
+        'name': form.get('name', '').strip(),
+        'payment_date': form.get('payment_date', '').strip(),
+        'currency': form.get('currency', '').strip().upper(),
+        'gross_amount': None,
+        'tax_withheld': None,
+        'foreign_tax_withheld': None,
+        'japanese_income_tax_withheld': None,
+        'japanese_local_tax_withheld': None,
+        'deductible_interest': None,
+        'quantity': None,
+        'amount_per_share': None,
+        'source_country': form.get('source_country', '').strip().upper(),
+        'security_type': form.get('security_type', 'listed_stock').strip(),
+        'tax_treatment': form.get('tax_treatment', 'undecided').strip(),
+        'broker': form.get('broker', '').strip(),
+        'account_name': form.get('account_name', '').strip(),
+        'tax_status': form.get('tax_status', '').strip(),
+        'fx_rate': None,
+        'notes': form.get('notes', '').strip(),
+    }
+
+    required_fields = ['symbol', 'name', 'payment_date', 'currency', 'broker', 'account_name', 'tax_status']
+    for field in required_fields:
+        if not values[field]:
+            errors.append(f"{field.replace('_', ' ').title()} is required.")
+
+    if values['currency'] and values['currency'] not in ['USD', 'JPY']:
+        errors.append("Currency must be USD or JPY.")
+    if values['security_type'] not in ['listed_stock', 'etf', 'mutual_fund', 'other']:
+        errors.append("Security type is not recognized.")
+    if values['tax_treatment'] not in ['undecided', 'not_filed', 'aggregate', 'separate']:
+        errors.append("Tax treatment is not recognized.")
+    if values['broker'] and values['broker'] not in config_options['broker']:
+        errors.append("Broker is not recognized.")
+    if values['account_name'] and values['account_name'] not in config_options['account_name']:
+        errors.append("Account name is not recognized.")
+    if values['tax_status'] and values['tax_status'] not in config_options['tax_status']:
+        errors.append("Tax status is not recognized.")
+
+    try:
+        datetime.strptime(values['payment_date'], '%Y-%m-%d')
+    except ValueError:
+        errors.append("Payment date must be in YYYY-MM-DD format.")
+
+    for field, label in [
+        ('gross_amount', 'Gross amount'),
+        ('tax_withheld', 'Other tax withheld'),
+        ('foreign_tax_withheld', 'Foreign tax withheld'),
+        ('japanese_income_tax_withheld', 'Japanese income tax withheld'),
+        ('japanese_local_tax_withheld', 'Japanese local tax withheld'),
+        ('deductible_interest', 'Deductible interest'),
+        ('quantity', 'Shares'),
+        ('amount_per_share', 'Amount per share'),
+        ('fx_rate', 'FX rate'),
+    ]:
+        try:
+            values[field] = _parse_optional_float(form.get(field))
+        except ValueError:
+            errors.append(f"{label} must be a valid number.")
+
+    if values['gross_amount'] is None:
+        if values['quantity'] is not None and values['amount_per_share'] is not None:
+            values['gross_amount'] = values['quantity'] * values['amount_per_share']
+        else:
+            errors.append("Gross amount is required unless shares and amount per share are provided.")
+
+    for field, label in [
+        ('gross_amount', 'Gross amount'),
+        ('tax_withheld', 'Other tax withheld'),
+        ('foreign_tax_withheld', 'Foreign tax withheld'),
+        ('japanese_income_tax_withheld', 'Japanese income tax withheld'),
+        ('japanese_local_tax_withheld', 'Japanese local tax withheld'),
+        ('deductible_interest', 'Deductible interest'),
+        ('quantity', 'Shares'),
+        ('amount_per_share', 'Amount per share'),
+    ]:
+        if values[field] is not None and values[field] < 0:
+            errors.append(f"{label} cannot be negative.")
+    if values['fx_rate'] is not None and values['fx_rate'] <= 0:
+        errors.append("FX rate must be positive.")
+    total_tax = sum(values[field] or 0 for field in [
+        'tax_withheld',
+        'foreign_tax_withheld',
+        'japanese_income_tax_withheld',
+        'japanese_local_tax_withheld',
+    ])
+    if values['gross_amount'] is not None and total_tax > values['gross_amount']:
+        errors.append("Total tax withheld cannot be greater than gross amount.")
 
     return values, errors
 
@@ -1144,6 +1297,95 @@ def _insert_mutual_fund_trade(values):
         )
         return cursor.lastrowid
 
+def _insert_dividend(values):
+    with sqlite3.connect(DATABASE) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO dividends (
+                symbol, name, payment_date, currency, gross_amount, tax_withheld,
+                foreign_tax_withheld, japanese_income_tax_withheld, japanese_local_tax_withheld,
+                deductible_interest, quantity, amount_per_share, source_country, security_type,
+                tax_treatment, broker, account_name, tax_status, fx_rate, notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                values['symbol'],
+                values['name'],
+                values['payment_date'],
+                values['currency'],
+                values['gross_amount'],
+                values['tax_withheld'],
+                values['foreign_tax_withheld'],
+                values['japanese_income_tax_withheld'],
+                values['japanese_local_tax_withheld'],
+                values['deductible_interest'],
+                values['quantity'],
+                values['amount_per_share'],
+                values['source_country'],
+                values['security_type'],
+                values['tax_treatment'],
+                values['broker'],
+                values['account_name'],
+                values['tax_status'],
+                values['fx_rate'],
+                values['notes']
+            )
+        )
+        return cursor.lastrowid
+
+def _update_dividend(dividend_id, values):
+    with sqlite3.connect(DATABASE) as conn:
+        cursor = conn.execute(
+            """
+            UPDATE dividends
+            SET symbol = ?,
+                name = ?,
+                payment_date = ?,
+                currency = ?,
+                gross_amount = ?,
+                tax_withheld = ?,
+                foreign_tax_withheld = ?,
+                japanese_income_tax_withheld = ?,
+                japanese_local_tax_withheld = ?,
+                deductible_interest = ?,
+                quantity = ?,
+                amount_per_share = ?,
+                source_country = ?,
+                security_type = ?,
+                tax_treatment = ?,
+                broker = ?,
+                account_name = ?,
+                tax_status = ?,
+                fx_rate = ?,
+                notes = ?
+            WHERE id = ?
+            """,
+            (
+                values['symbol'],
+                values['name'],
+                values['payment_date'],
+                values['currency'],
+                values['gross_amount'],
+                values['tax_withheld'],
+                values['foreign_tax_withheld'],
+                values['japanese_income_tax_withheld'],
+                values['japanese_local_tax_withheld'],
+                values['deductible_interest'],
+                values['quantity'],
+                values['amount_per_share'],
+                values['source_country'],
+                values['security_type'],
+                values['tax_treatment'],
+                values['broker'],
+                values['account_name'],
+                values['tax_status'],
+                values['fx_rate'],
+                values['notes'],
+                dividend_id
+            )
+        )
+        return cursor.rowcount
+
 def _stock_trade_api_row(row):
     trade = dict(row)
     trade['instrument_type'] = 'stock'
@@ -1177,6 +1419,111 @@ def _fetch_mutual_fund_trade_row(trade_id):
     with sqlite3.connect(DATABASE) as conn:
         conn.row_factory = sqlite3.Row
         return conn.execute('SELECT * FROM mutual_fund_trades WHERE id = ?', (trade_id,)).fetchone()
+
+def _dividend_api_row(row):
+    dividend = dict(row)
+    tax_withheld = sum(dividend.get(field) or 0 for field in [
+        'tax_withheld',
+        'foreign_tax_withheld',
+        'japanese_income_tax_withheld',
+        'japanese_local_tax_withheld',
+    ])
+    dividend['total_tax_withheld'] = tax_withheld
+    dividend['dividend_income_amount'] = (dividend.get('gross_amount') or 0) - (dividend.get('deductible_interest') or 0)
+    dividend['net_amount'] = (dividend.get('gross_amount') or 0) - tax_withheld
+    if dividend.get('currency') == 'JPY':
+        dividend['gross_amount_jpy'] = dividend.get('gross_amount') or 0
+        dividend['tax_withheld_jpy'] = tax_withheld
+        dividend['foreign_tax_withheld_jpy'] = dividend.get('foreign_tax_withheld') or 0
+        dividend['japanese_income_tax_withheld_jpy'] = dividend.get('japanese_income_tax_withheld') or 0
+        dividend['japanese_local_tax_withheld_jpy'] = dividend.get('japanese_local_tax_withheld') or 0
+        dividend['dividend_income_amount_jpy'] = dividend['dividend_income_amount']
+        dividend['net_amount_jpy'] = dividend['net_amount']
+    elif dividend.get('fx_rate'):
+        dividend['gross_amount_jpy'] = (dividend.get('gross_amount') or 0) * dividend['fx_rate']
+        dividend['tax_withheld_jpy'] = tax_withheld * dividend['fx_rate']
+        dividend['foreign_tax_withheld_jpy'] = (dividend.get('foreign_tax_withheld') or 0) * dividend['fx_rate']
+        dividend['japanese_income_tax_withheld_jpy'] = (dividend.get('japanese_income_tax_withheld') or 0) * dividend['fx_rate']
+        dividend['japanese_local_tax_withheld_jpy'] = (dividend.get('japanese_local_tax_withheld') or 0) * dividend['fx_rate']
+        dividend['dividend_income_amount_jpy'] = dividend['dividend_income_amount'] * dividend['fx_rate']
+        dividend['net_amount_jpy'] = dividend['net_amount'] * dividend['fx_rate']
+    else:
+        dividend['gross_amount_jpy'] = None
+        dividend['tax_withheld_jpy'] = None
+        dividend['foreign_tax_withheld_jpy'] = None
+        dividend['japanese_income_tax_withheld_jpy'] = None
+        dividend['japanese_local_tax_withheld_jpy'] = None
+        dividend['dividend_income_amount_jpy'] = None
+        dividend['net_amount_jpy'] = None
+    return dividend
+
+def _fetch_dividend_row(dividend_id):
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        return conn.execute('SELECT * FROM dividends WHERE id = ?', (dividend_id,)).fetchone()
+
+def _get_dividend_filter_options():
+    config_options = get_config_options()
+    with sqlite3.connect(DATABASE) as conn:
+        years = [
+            row[0]
+            for row in conn.execute(
+                "SELECT DISTINCT SUBSTR(payment_date, 1, 4) FROM dividends WHERE payment_date IS NOT NULL AND payment_date != '' ORDER BY 1 DESC"
+            ).fetchall()
+            if row[0]
+        ]
+    return {
+        'brokers': config_options['broker'],
+        'account_names': config_options['account_name'],
+        'tax_statuses': config_options['tax_status'],
+        'years': years,
+    }
+
+def _dividend_filter_query(filters):
+    where = []
+    params = []
+    if filters.get('year') and filters['year'] != 'all':
+        where.append("SUBSTR(payment_date, 1, 4) = ?")
+        params.append(filters['year'])
+    for query_key, column_name in [
+        ('broker', 'broker'),
+        ('account_name', 'account_name'),
+        ('tax_status', 'tax_status'),
+        ('tax_treatment', 'tax_treatment'),
+    ]:
+        value = filters.get(query_key)
+        if value and value != 'all':
+            where.append(f"{column_name} = ?")
+            params.append(value)
+    return where, params
+
+def _calculate_dividend_income_summary():
+    current_year = _portfolio_day_str()[:4]
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute('SELECT * FROM dividends ORDER BY payment_date DESC, id DESC').fetchall()
+
+    dividends = [_dividend_api_row(row) for row in rows]
+
+    def summarize(items):
+        known_income = [item['dividend_income_amount_jpy'] for item in items if item['dividend_income_amount_jpy'] is not None]
+        known_net = [item['net_amount_jpy'] for item in items if item['net_amount_jpy'] is not None]
+        return {
+            'income_jpy': sum(known_income),
+            'net_jpy': sum(known_net),
+            'count': len(items),
+            'missing_fx_count': sum(1 for item in items if item['dividend_income_amount_jpy'] is None),
+        }
+
+    ytd_dividends = [
+        dividend for dividend in dividends
+        if (dividend.get('payment_date') or '').startswith(current_year)
+    ]
+    return {
+        'year': current_year,
+        'ytd': summarize(ytd_dividends),
+        'all_time': summarize(dividends),
+    }
 
 def _parse_config_option_form(form):
     category = (form.get('category', '') or '').strip()
@@ -1354,6 +1701,56 @@ def init_db():
             "INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)",
             [(key, str(value)) for key, value in APP_SETTING_DEFAULTS.items()]
         )
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS watchlist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                name TEXT,
+                currency TEXT NOT NULL DEFAULT 'USD',
+                target_price REAL,
+                stop_price REAL,
+                notes TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS dividends (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                name TEXT NOT NULL,
+                payment_date TEXT NOT NULL,
+                currency TEXT NOT NULL,
+                gross_amount REAL NOT NULL,
+                tax_withheld REAL DEFAULT 0,
+                foreign_tax_withheld REAL DEFAULT 0,
+                japanese_income_tax_withheld REAL DEFAULT 0,
+                japanese_local_tax_withheld REAL DEFAULT 0,
+                deductible_interest REAL DEFAULT 0,
+                quantity REAL,
+                amount_per_share REAL,
+                source_country TEXT,
+                security_type TEXT DEFAULT 'listed_stock',
+                tax_treatment TEXT DEFAULT 'undecided',
+                broker TEXT,
+                account_name TEXT,
+                tax_status TEXT,
+                fx_rate REAL,
+                notes TEXT
+            )
+        ''')
+        dividend_columns = [row[1] for row in conn.execute("PRAGMA table_info(dividends)").fetchall()]
+        for column_name, column_definition in [
+            ('foreign_tax_withheld', 'REAL DEFAULT 0'),
+            ('japanese_income_tax_withheld', 'REAL DEFAULT 0'),
+            ('japanese_local_tax_withheld', 'REAL DEFAULT 0'),
+            ('deductible_interest', 'REAL DEFAULT 0'),
+            ('source_country', 'TEXT'),
+            ('security_type', "TEXT DEFAULT 'listed_stock'"),
+            ('tax_treatment', "TEXT DEFAULT 'undecided'"),
+        ]:
+            if column_name not in dividend_columns:
+                conn.execute(f"ALTER TABLE dividends ADD COLUMN {column_name} {column_definition}")
         conn.execute('''
             CREATE TABLE IF NOT EXISTS config_options (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1953,7 +2350,76 @@ def index():
                            selected_broker=broker_filter,
                            selected_currency=currency_filter,
                            selected_account_name=account_name_filter,
-                           selected_tax_status=tax_status_filter)
+                           selected_tax_status=tax_status_filter,
+                           watchlist=_fetch_watchlist())
+
+@app.route('/watchlist', methods=['POST'])
+def add_watchlist_item():
+    _validate_csrf_token()
+    values, errors = _parse_watchlist_form(request.form)
+    if errors:
+        for error in errors:
+            flash(error, 'danger')
+        return redirect(url_for('index'))
+
+    now = _portfolio_now().strftime('%Y-%m-%d %H:%M:%S')
+    with sqlite3.connect(DATABASE) as conn:
+        conn.execute('''
+            INSERT INTO watchlist (symbol, name, currency, target_price, stop_price, notes, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            values['symbol'],
+            values['name'],
+            values['currency'],
+            values['target_price'],
+            values['stop_price'],
+            values['notes'],
+            now,
+            now
+        ))
+    flash(f"{values['symbol']} added to the watch list.", 'success')
+    return redirect(url_for('index'))
+
+@app.route('/watchlist/<int:item_id>', methods=['POST'])
+def update_watchlist_item(item_id):
+    _validate_csrf_token()
+    values, errors = _parse_watchlist_form(request.form)
+    if errors:
+        for error in errors:
+            flash(error, 'danger')
+        return redirect(url_for('index'))
+
+    with sqlite3.connect(DATABASE) as conn:
+        cursor = conn.execute('''
+            UPDATE watchlist
+            SET symbol = ?, name = ?, currency = ?, target_price = ?, stop_price = ?, notes = ?, updated_at = ?
+            WHERE id = ?
+        ''', (
+            values['symbol'],
+            values['name'],
+            values['currency'],
+            values['target_price'],
+            values['stop_price'],
+            values['notes'],
+            _portfolio_now().strftime('%Y-%m-%d %H:%M:%S'),
+            item_id
+        ))
+    if cursor.rowcount:
+        flash(f"{values['symbol']} watch details updated.", 'success')
+    else:
+        flash("Watch list item was not found.", 'warning')
+    return redirect(url_for('index'))
+
+@app.route('/watchlist/<int:item_id>/delete', methods=['POST'])
+def delete_watchlist_item(item_id):
+    _validate_csrf_token()
+    with sqlite3.connect(DATABASE) as conn:
+        cursor = conn.execute("DELETE FROM watchlist WHERE id = ?", (item_id,))
+    if cursor.rowcount:
+        flash("Watch list item removed.", 'success')
+    else:
+        flash("Watch list item was not found.", 'warning')
+    return redirect(url_for('index'))
 
 @app.route('/health')
 def portfolio_health():
@@ -1989,6 +2455,7 @@ def portfolio_health():
         **summary,
         health=health,
         performance=performance,
+        dividend_income_summary=_calculate_dividend_income_summary(),
         history_data=history_data,
         exchange_rate=exchange_rate,
         fx_latest_data_at=fx_latest_data_at,
@@ -2371,6 +2838,79 @@ def _openapi_spec():
                     'responses': {'200': {'description': 'Mutual fund trade row'}, '404': {'description': 'Trade not found'}},
                 }
             },
+            '/api/dividends': {
+                'get': {
+                    'summary': 'List dividend income records',
+                    'parameters': [
+                        {'name': 'year', 'in': 'query', 'schema': {'type': 'string', 'default': 'all'}, 'description': 'YYYY or all'},
+                        {'name': 'broker', 'in': 'query', 'schema': {'type': 'string', 'default': 'all'}},
+                        {'name': 'account_name', 'in': 'query', 'schema': {'type': 'string', 'default': 'all'}},
+                        {'name': 'tax_status', 'in': 'query', 'schema': {'type': 'string', 'default': 'all'}},
+                        {'name': 'tax_treatment', 'in': 'query', 'schema': {'type': 'string', 'enum': ['all', 'undecided', 'not_filed', 'aggregate', 'separate'], 'default': 'all'}},
+                        {'name': 'limit', 'in': 'query', 'schema': {'type': 'integer', 'minimum': 1, 'maximum': 10000}},
+                    ],
+                    'responses': {'200': {'description': 'Dividend rows and JPY totals'}, '400': {'description': 'Invalid query parameter'}},
+                },
+                'post': {
+                    'summary': 'Create a dividend income record',
+                    'requestBody': {
+                        'required': True,
+                        'content': {
+                            'application/json': {
+                                'schema': {
+                                    'type': 'object',
+                                    'required': ['symbol', 'name', 'payment_date', 'currency', 'broker', 'account_name', 'tax_status'],
+                                    'properties': {
+                                        'symbol': {'type': 'string', 'example': 'VOO'},
+                                        'name': {'type': 'string', 'example': 'Vanguard S&P 500 ETF'},
+                                        'payment_date': {'type': 'string', 'format': 'date'},
+                                        'currency': {'type': 'string', 'enum': ['USD', 'JPY']},
+                                        'gross_amount': {'type': ['number', 'null'], 'minimum': 0},
+                                        'tax_withheld': {'type': ['number', 'null'], 'minimum': 0},
+                                        'foreign_tax_withheld': {'type': ['number', 'null'], 'minimum': 0},
+                                        'japanese_income_tax_withheld': {'type': ['number', 'null'], 'minimum': 0},
+                                        'japanese_local_tax_withheld': {'type': ['number', 'null'], 'minimum': 0},
+                                        'deductible_interest': {'type': ['number', 'null'], 'minimum': 0},
+                                        'quantity': {'type': ['number', 'null'], 'minimum': 0},
+                                        'amount_per_share': {'type': ['number', 'null'], 'minimum': 0},
+                                        'source_country': {'type': 'string'},
+                                        'security_type': {'type': 'string', 'enum': ['listed_stock', 'etf', 'mutual_fund', 'other']},
+                                        'tax_treatment': {'type': 'string', 'enum': ['undecided', 'not_filed', 'aggregate', 'separate']},
+                                        'broker': {'type': 'string'},
+                                        'account_name': {'type': 'string'},
+                                        'tax_status': {'type': 'string'},
+                                        'fx_rate': {'type': ['number', 'null'], 'exclusiveMinimum': 0},
+                                        'notes': {'type': 'string'},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    'responses': {'201': {'description': 'Dividend created'}, '400': {'description': 'Validation errors'}, '415': {'description': 'JSON required'}},
+                },
+            },
+            '/api/dividends/{dividend_id}': {
+                'get': {
+                    'summary': 'Get one dividend income record',
+                    'parameters': [{'name': 'dividend_id', 'in': 'path', 'required': True, 'schema': {'type': 'integer'}}],
+                    'responses': {'200': {'description': 'Dividend row'}, '404': {'description': 'Dividend not found'}},
+                },
+                'put': {
+                    'summary': 'Replace a dividend income record',
+                    'parameters': [{'name': 'dividend_id', 'in': 'path', 'required': True, 'schema': {'type': 'integer'}}],
+                    'responses': {'200': {'description': 'Dividend updated'}, '400': {'description': 'Validation errors'}, '404': {'description': 'Dividend not found'}, '415': {'description': 'JSON required'}},
+                },
+                'patch': {
+                    'summary': 'Update a dividend income record',
+                    'parameters': [{'name': 'dividend_id', 'in': 'path', 'required': True, 'schema': {'type': 'integer'}}],
+                    'responses': {'200': {'description': 'Dividend updated'}, '400': {'description': 'Validation errors'}, '404': {'description': 'Dividend not found'}, '415': {'description': 'JSON required'}},
+                },
+                'delete': {
+                    'summary': 'Delete a dividend income record',
+                    'parameters': [{'name': 'dividend_id', 'in': 'path', 'required': True, 'schema': {'type': 'integer'}}],
+                    'responses': {'200': {'description': 'Dividend deleted'}, '404': {'description': 'Dividend not found'}},
+                },
+            },
             '/api/version': {
                 'get': {
                     'summary': 'Get application version status',
@@ -2499,6 +3039,84 @@ def api_mutual_fund_trade(trade_id):
     if row is None:
         return jsonify({'error': 'Mutual fund trade not found'}), 404
     return jsonify(_mutual_fund_trade_api_row(row))
+
+@app.route('/api/dividends', methods=['GET', 'POST'])
+def api_dividends():
+    """API endpoint to list or create dividend income records."""
+    if request.method == 'GET':
+        limit = request.args.get('limit')
+        filters = {
+            'year': request.args.get('year', 'all'),
+            'broker': request.args.get('broker', 'all'),
+            'account_name': request.args.get('account_name', 'all'),
+            'tax_status': request.args.get('tax_status', 'all'),
+            'tax_treatment': request.args.get('tax_treatment', 'all'),
+        }
+        try:
+            limit = int(limit) if limit else None
+        except ValueError:
+            return jsonify({'error': 'limit must be an integer'}), 400
+        if limit is not None:
+            limit = max(1, min(limit, 10000))
+        if filters['year'] != 'all':
+            if not re.fullmatch(r'\d{4}', filters['year']):
+                return jsonify({'error': 'year must be YYYY'}), 400
+        if filters['tax_treatment'] not in ['all', 'undecided', 'not_filed', 'aggregate', 'separate']:
+            return jsonify({'error': 'tax_treatment must be all, undecided, not_filed, aggregate, or separate'}), 400
+
+        where, params = _dividend_filter_query(filters)
+        query = 'SELECT * FROM dividends'
+        if where:
+            query += ' WHERE ' + ' AND '.join(where)
+        query += ' ORDER BY payment_date DESC, id DESC'
+        if limit:
+            query += ' LIMIT ?'
+            params.append(limit)
+
+        with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(query, params).fetchall()
+        dividends = [_dividend_api_row(row) for row in rows]
+        totals = {
+            'gross_jpy': sum(d['gross_amount_jpy'] or 0 for d in dividends),
+            'tax_jpy': sum(d['tax_withheld_jpy'] or 0 for d in dividends),
+            'net_jpy': sum(d['net_amount_jpy'] or 0 for d in dividends),
+        }
+        return jsonify({'count': len(dividends), 'filters': filters, 'totals': totals, 'dividends': dividends})
+
+    if not request.is_json:
+        return jsonify({'error': 'Request body must be JSON'}), 415
+    values, errors = _parse_dividend_form(_json_to_form_payload(request.get_json(silent=True)))
+    if errors:
+        return jsonify({'errors': errors}), 400
+    dividend_id = _insert_dividend(values)
+    row = _fetch_dividend_row(dividend_id)
+    return jsonify({'message': 'Dividend created.', 'dividend': _dividend_api_row(row)}), 201
+
+@app.route('/api/dividends/<int:dividend_id>', methods=['GET', 'PUT', 'PATCH', 'DELETE'])
+def api_dividend(dividend_id):
+    """API endpoint to retrieve, update, or delete one dividend income record."""
+    row = _fetch_dividend_row(dividend_id)
+    if row is None:
+        return jsonify({'error': 'Dividend not found'}), 404
+
+    if request.method == 'GET':
+        return jsonify(_dividend_api_row(row))
+    if request.method == 'DELETE':
+        with sqlite3.connect(DATABASE) as conn:
+            conn.execute('DELETE FROM dividends WHERE id = ?', (dividend_id,))
+        return jsonify({'message': 'Dividend deleted.'})
+
+    if not request.is_json:
+        return jsonify({'error': 'Request body must be JSON'}), 415
+    payload = dict(row)
+    payload.update(request.get_json(silent=True) or {})
+    values, errors = _parse_dividend_form(_json_to_form_payload(payload))
+    if errors:
+        return jsonify({'errors': errors}), 400
+    _update_dividend(dividend_id, values)
+    row = _fetch_dividend_row(dividend_id)
+    return jsonify({'message': 'Dividend updated.', 'dividend': _dividend_api_row(row)})
 
 @app.route('/api/version')
 def api_version():
@@ -2689,6 +3307,8 @@ def tax_report():
                 SELECT DISTINCT SUBSTR(trade_date, 1, 4) as year FROM trades
                 UNION
                 SELECT DISTINCT SUBSTR(trade_date, 1, 4) as year FROM mutual_fund_trades
+                UNION
+                SELECT DISTINCT SUBSTR(payment_date, 1, 4) as year FROM dividends
             ) ORDER BY year DESC
             """
         )
@@ -2774,6 +3394,140 @@ def list_mutual_fund_trades():
         conn.row_factory = sqlite3.Row
         trades = conn.execute('SELECT * FROM mutual_fund_trades ORDER BY trade_date DESC').fetchall()
     return render_template('mutual_fund_trades.html', trades=trades)
+
+@app.route('/dividends')
+def list_dividends():
+    """Displays all dividend income records."""
+    filter_options = _get_dividend_filter_options()
+    selected_year = request.args.get('year') or _portfolio_day_str()[:4]
+    selected_broker = request.args.get('broker', 'all')
+    selected_account_name = request.args.get('account_name', 'all')
+    selected_tax_status = request.args.get('tax_status', 'all')
+    selected_tax_treatment = request.args.get('tax_treatment', 'all')
+    if selected_year != 'all' and not re.fullmatch(r'\d{4}', selected_year):
+        selected_year = _portfolio_day_str()[:4]
+        flash('Invalid dividend year filter. Showing the current year.', 'warning')
+    if selected_tax_treatment not in ['all', 'undecided', 'not_filed', 'aggregate', 'separate']:
+        selected_tax_treatment = 'all'
+        flash('Invalid dividend filing treatment filter. Showing all treatments.', 'warning')
+
+    filters = {
+        'year': selected_year,
+        'broker': selected_broker,
+        'account_name': selected_account_name,
+        'tax_status': selected_tax_status,
+        'tax_treatment': selected_tax_treatment,
+    }
+    where, params = _dividend_filter_query(filters)
+    query = 'SELECT * FROM dividends'
+    if where:
+        query += ' WHERE ' + ' AND '.join(where)
+    query += ' ORDER BY payment_date DESC, id DESC'
+
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(query, params).fetchall()
+    dividends = [_dividend_api_row(row) for row in rows]
+    totals = {
+        'gross_jpy': sum(dividend['gross_amount_jpy'] or 0 for dividend in dividends),
+        'tax_jpy': sum(dividend['tax_withheld_jpy'] or 0 for dividend in dividends),
+        'net_jpy': sum(dividend['net_amount_jpy'] or 0 for dividend in dividends),
+    }
+    return render_template(
+        'dividends.html',
+        dividends=dividends,
+        totals=totals,
+        dividend_income_summary=_calculate_dividend_income_summary(),
+        years=filter_options['years'],
+        brokers=filter_options['brokers'],
+        account_names=filter_options['account_names'],
+        tax_statuses=filter_options['tax_statuses'],
+        selected_year=selected_year,
+        selected_broker=selected_broker,
+        selected_account_name=selected_account_name,
+        selected_tax_status=selected_tax_status,
+        selected_tax_treatment=selected_tax_treatment
+    )
+
+@app.route('/add_dividend', methods=['GET', 'POST'])
+def add_dividend():
+    """Handles adding a dividend income record."""
+    config_options = get_config_options()
+    if request.method == 'POST':
+        _validate_csrf_token()
+        values, errors = _parse_dividend_form(request.form)
+        if errors:
+            for error in errors:
+                flash(error, 'danger')
+            return render_template(
+                'add_dividend.html',
+                today=values.get('payment_date') or _portfolio_day_str(),
+                values=values,
+                brokers=config_options['broker'],
+                account_names=config_options['account_name'],
+                tax_statuses=config_options['tax_status']
+            )
+
+        _insert_dividend(values)
+        flash('Dividend saved.', 'success')
+        return redirect(url_for('list_dividends'))
+
+    return render_template(
+        'add_dividend.html',
+        today=_portfolio_day_str(),
+        values={},
+        brokers=config_options['broker'],
+        account_names=config_options['account_name'],
+        tax_statuses=config_options['tax_status']
+    )
+
+@app.route('/edit_dividend/<int:dividend_id>', methods=['GET', 'POST'])
+def edit_dividend(dividend_id):
+    """Handles editing an existing dividend income record."""
+    config_options = get_config_options()
+    if request.method == 'POST':
+        _validate_csrf_token()
+        values, errors = _parse_dividend_form(request.form)
+        if errors:
+            for error in errors:
+                flash(error, 'danger')
+            return render_template(
+                'edit_dividend.html',
+                dividend_id=dividend_id,
+                today=values.get('payment_date') or _portfolio_day_str(),
+                values=values,
+                brokers=config_options['broker'],
+                account_names=config_options['account_name'],
+                tax_statuses=config_options['tax_status']
+            )
+
+        if not _update_dividend(dividend_id, values):
+            abort(404)
+        flash('Dividend updated.', 'success')
+        return redirect(url_for('list_dividends'))
+
+    row = _fetch_dividend_row(dividend_id)
+    if row is None:
+        abort(404)
+    return render_template(
+        'edit_dividend.html',
+        dividend_id=dividend_id,
+        today=_portfolio_day_str(),
+        values=dict(row),
+        brokers=config_options['broker'],
+        account_names=config_options['account_name'],
+        tax_statuses=config_options['tax_status']
+    )
+
+@app.route('/delete_dividend/<int:dividend_id>', methods=['POST'])
+def delete_dividend(dividend_id):
+    _validate_csrf_token()
+    with sqlite3.connect(DATABASE) as conn:
+        cursor = conn.execute('DELETE FROM dividends WHERE id = ?', (dividend_id,))
+    if cursor.rowcount == 0:
+        abort(404)
+    flash('Dividend deleted.', 'success')
+    return redirect(url_for('list_dividends'))
 
 @app.route('/add_mutual_fund_trade', methods=['GET', 'POST'])
 def add_mutual_fund_trade():

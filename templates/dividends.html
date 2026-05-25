@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+
+{% block title %}Dividend Income{% endblock %}
+
+{% block content %}
+<div class="page-toolbar d-flex justify-content-between align-items-center mb-4">
+    <h1>Dividend Income</h1>
+    <div class="page-actions">
+        <a href="{{ url_for('add_dividend') }}" class="btn btn-primary">Add Dividend</a>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-6 mb-3">
+        <div class="card metric-card metric-positive h-100">
+            <div class="card-header">Dividend Income YTD</div>
+            <div class="card-body">
+                <h3 class="card-title sensitive-data">&yen;{{ "{:,.0f}".format(dividend_income_summary.ytd.income_jpy) }}</h3>
+                <p class="card-text text-white-50">
+                    {{ dividend_income_summary.year }}
+                    {% if dividend_income_summary.ytd.missing_fx_count %}
+                        · {{ dividend_income_summary.ytd.missing_fx_count }} missing FX
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 mb-3">
+        <div class="card metric-card metric-accent h-100">
+            <div class="card-header">Total Dividend Income</div>
+            <div class="card-body">
+                <h3 class="card-title sensitive-data">&yen;{{ "{:,.0f}".format(dividend_income_summary.all_time.income_jpy) }}</h3>
+                <p class="card-text text-white-50">
+                    All time
+                    {% if dividend_income_summary.all_time.missing_fx_count %}
+                        · {{ dividend_income_summary.all_time.missing_fx_count }} missing FX
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% set has_active_filters = selected_year != 'all' or selected_broker != 'all' or selected_account_name != 'all' or selected_tax_status != 'all' or selected_tax_treatment != 'all' %}
+<div class="card filter-card mb-4">
+    <div class="filter-toggle-row">
+        <button class="btn btn-outline-info" type="button" data-bs-toggle="collapse" data-bs-target="#dividendFilters" aria-expanded="{{ 'true' if has_active_filters else 'false' }}" aria-controls="dividendFilters">
+            <i class="fas fa-filter me-1"></i> Filters
+        </button>
+        <div class="filter-summary">
+            {% if has_active_filters %}
+                {% if selected_year != 'all' %}<span class="badge bg-info">{{ selected_year }}</span>{% endif %}
+                {% if selected_broker != 'all' %}<span class="badge bg-info">{{ selected_broker }}</span>{% endif %}
+                {% if selected_account_name != 'all' %}<span class="badge bg-info">{{ selected_account_name }}</span>{% endif %}
+                {% if selected_tax_status != 'all' %}<span class="badge bg-info">{{ selected_tax_status }}</span>{% endif %}
+                {% if selected_tax_treatment != 'all' %}<span class="badge bg-info">{{ selected_tax_treatment|replace('_', ' ')|title }}</span>{% endif %}
+            {% else %}
+                <span class="text-muted">All dividends</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="collapse {% if has_active_filters %}show{% endif %}" id="dividendFilters">
+        <div class="card-body pt-0">
+            <form method="GET" action="{{ url_for('list_dividends') }}" id="dividendFilterForm" class="row g-3 align-items-end">
+                <div class="col-md-2">
+                    <label for="dividendYearFilter" class="form-label">Year</label>
+                    <select id="dividendYearFilter" name="year" class="form-select">
+                        <option value="all" {% if selected_year == 'all' %}selected{% endif %}>All Years</option>
+                        {% if selected_year != 'all' and selected_year not in years %}
+                        <option value="{{ selected_year }}" selected>{{ selected_year }}</option>
+                        {% endif %}
+                        {% for year in years %}
+                        <option value="{{ year }}" {% if selected_year == year %}selected{% endif %}>{{ year }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label for="dividendBrokerFilter" class="form-label">Broker</label>
+                    <select id="dividendBrokerFilter" name="broker" class="form-select">
+                        <option value="all" {% if selected_broker == 'all' %}selected{% endif %}>All Brokers</option>
+                        {% for broker in brokers %}
+                        <option value="{{ broker }}" {% if selected_broker == broker %}selected{% endif %}>{{ broker }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="dividendAccountFilter" class="form-label">Account</label>
+                    <select id="dividendAccountFilter" name="account_name" class="form-select">
+                        <option value="all" {% if selected_account_name == 'all' %}selected{% endif %}>All Accounts</option>
+                        {% for account_name in account_names %}
+                        <option value="{{ account_name }}" {% if selected_account_name == account_name %}selected{% endif %}>{{ account_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label for="dividendTaxStatusFilter" class="form-label">Tax Status</label>
+                    <select id="dividendTaxStatusFilter" name="tax_status" class="form-select">
+                        <option value="all" {% if selected_tax_status == 'all' %}selected{% endif %}>All Tax Statuses</option>
+                        {% for tax_status in tax_statuses %}
+                        <option value="{{ tax_status }}" {% if selected_tax_status == tax_status %}selected{% endif %}>{{ tax_status }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="dividendTreatmentFilter" class="form-label">Filing Treatment</label>
+                    <select id="dividendTreatmentFilter" name="tax_treatment" class="form-select">
+                        <option value="all" {% if selected_tax_treatment == 'all' %}selected{% endif %}>All Treatments</option>
+                        <option value="undecided" {% if selected_tax_treatment == 'undecided' %}selected{% endif %}>Undecided</option>
+                        <option value="not_filed" {% if selected_tax_treatment == 'not_filed' %}selected{% endif %}>No Filing</option>
+                        <option value="aggregate" {% if selected_tax_treatment == 'aggregate' %}selected{% endif %}>Aggregate</option>
+                        <option value="separate" {% if selected_tax_treatment == 'separate' %}selected{% endif %}>Separate</option>
+                    </select>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-4 mb-3">
+        <div class="card metric-card metric-accent h-100">
+            <div class="card-header">Gross Income</div>
+            <div class="card-body">
+                <h3 class="card-title sensitive-data">&yen;{{ "{:,.0f}".format(totals.gross_jpy) }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4 mb-3">
+        <div class="card metric-card metric-negative h-100">
+            <div class="card-header">Tax Withheld</div>
+            <div class="card-body">
+                <h3 class="card-title sensitive-data">&yen;{{ "{:,.0f}".format(totals.tax_jpy) }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4 mb-3">
+        <div class="card metric-card metric-positive h-100">
+            <div class="card-header">Net Income</div>
+            <div class="card-body">
+                <h3 class="card-title sensitive-data">&yen;{{ "{:,.0f}".format(totals.net_jpy) }}</h3>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        {% if dividends %}
+            <div class="table-responsive">
+                <table class="table table-hover table-dark">
+                    <thead>
+                        <tr>
+                            <th>Payment Date</th>
+                            <th>Symbol</th>
+                            <th>Broker</th>
+                            <th>Account</th>
+                            <th>Gross</th>
+                            <th>Income</th>
+                            <th>Tax</th>
+                            <th>Net</th>
+                            <th>Treatment</th>
+                            <th>FX</th>
+                            <th>Notes</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for dividend in dividends %}
+                        {% set symbol = '&yen;'|safe if dividend.currency == 'JPY' else '$' %}
+                        <tr>
+                            <td>{{ dividend.payment_date }}</td>
+                            <td>
+                                <strong>{{ dividend.symbol }}</strong><br>
+                                <small class="text-muted">{{ dividend.name }}</small>
+                            </td>
+                            <td>{{ dividend.broker }}</td>
+                            <td>{{ dividend.account_name or 'Default' }}</td>
+                            <td><span class="sensitive-data">{{ symbol }}{{ "{:,.2f}".format(dividend.gross_amount) }}</span></td>
+                            <td><span class="sensitive-data">{{ symbol }}{{ "{:,.2f}".format(dividend.dividend_income_amount) }}</span></td>
+                            <td>
+                                <span class="sensitive-data">{{ symbol }}{{ "{:,.2f}".format(dividend.total_tax_withheld) }}</span>
+                                {% if dividend.foreign_tax_withheld %}
+                                    <br><small class="text-muted sensitive-data">Foreign {{ symbol }}{{ "{:,.2f}".format(dividend.foreign_tax_withheld) }}</small>
+                                {% endif %}
+                                {% if dividend.japanese_income_tax_withheld or dividend.japanese_local_tax_withheld %}
+                                    <br><small class="text-muted sensitive-data">JP {{ symbol }}{{ "{:,.2f}".format((dividend.japanese_income_tax_withheld or 0) + (dividend.japanese_local_tax_withheld or 0)) }}</small>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="sensitive-data">{{ symbol }}{{ "{:,.2f}".format(dividend.net_amount) }}</span>
+                                {% if dividend.net_amount_jpy is not none and dividend.currency != 'JPY' %}
+                                    <br><small class="text-muted sensitive-data">&yen;{{ "{:,.0f}".format(dividend.net_amount_jpy) }}</small>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {{ (dividend.tax_treatment or 'undecided')|replace('_', ' ')|title }}
+                                {% if dividend.source_country %}<br><small class="text-muted">{{ dividend.source_country }}</small>{% endif %}
+                            </td>
+                            <td><span class="sensitive-data">{{ "%.4f"|format(dividend.fx_rate) if dividend.fx_rate is not none else 'N/A' }}</span></td>
+                            <td>{{ dividend.notes or '' }}</td>
+                            <td>
+                                <a href="{{ url_for('edit_dividend', dividend_id=dividend.id) }}" class="btn btn-sm btn-outline-primary">Edit</a>
+                                <form method="POST" action="{{ url_for('delete_dividend', dividend_id=dividend.id) }}" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this dividend?')">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="text-center p-5">
+                <h4>No dividend income recorded.</h4>
+                <p>Add your first dividend payment to start tracking income.</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const filterForm = document.getElementById('dividendFilterForm');
+    if (!filterForm) return;
+
+    filterForm.querySelectorAll('select').forEach((filter) => {
+        filter.addEventListener('change', () => {
+            document.body.style.opacity = '0.5';
+            filterForm.submit();
+        });
+    });
+});
+</script>
+{% endblock %}

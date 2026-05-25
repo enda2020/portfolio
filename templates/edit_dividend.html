@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Dividend{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-6 offset-md-3">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="mb-0">Edit Dividend</h3>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('edit_dividend', dividend_id=dividend_id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    {% include "_dividend_form.html" %}
+                    <button type="submit" class="btn btn-primary">Update Dividend</button>
+                    <a href="{{ url_for('list_dividends') }}" class="btn btn-secondary">Cancel</a>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
