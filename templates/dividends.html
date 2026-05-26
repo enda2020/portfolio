@@ -11,7 +11,7 @@
 </div>
 
 <div class="row mb-4">
-    <div class="col-md-6 mb-3">
+    <div class="col-md-4 mb-3">
         <div class="card metric-card metric-positive h-100">
             <div class="card-header">Dividend Income YTD</div>
             <div class="card-body">
@@ -25,7 +25,21 @@
             </div>
         </div>
     </div>
-    <div class="col-md-6 mb-3">
+    <div class="col-md-4 mb-3">
+        <div class="card metric-card metric-accent h-100">
+            <div class="card-header">Avg. Monthly Income</div>
+            <div class="card-body">
+                <h3 class="card-title sensitive-data">&yen;{{ "{:,.0f}".format(dividend_income_summary.ytd.avg_monthly_income_jpy) }}</h3>
+                <p class="card-text text-white-50">
+                    {{ dividend_income_summary.year }} YTD / {{ dividend_income_summary.ytd.avg_monthly_months }} months
+                    {% if dividend_income_summary.ytd.missing_fx_count %}
+                        Â· {{ dividend_income_summary.ytd.missing_fx_count }} missing FX
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4 mb-3">
         <div class="card metric-card metric-accent h-100">
             <div class="card-header">Total Dividend Income</div>
             <div class="card-body">

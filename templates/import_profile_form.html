@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Edit' if profile_id else 'Add' }} Import Profile{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8 offset-lg-2">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="mb-0">{{ 'Edit' if profile_id else 'Add' }} Import Profile</h3>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="name" class="form-label">Profile Name</label>
+                            <input class="form-control" id="name" name="name" value="{{ values.name or '' }}" placeholder="monex_stock" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="instrument_type" class="form-label">Instrument Type</label>
+                            <select class="form-select" id="instrument_type" name="instrument_type" required>
+                                <option value="stock" {% if values.instrument_type == 'stock' %}selected{% endif %}>Stock / ETF</option>
+                                <option value="mutual_fund" {% if values.instrument_type == 'mutual_fund' %}selected{% endif %}>Mutual Fund</option>
+                                <option value="dividend" {% if values.instrument_type == 'dividend' %}selected{% endif %}>Dividend</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="encoding" class="form-label">Encoding</label>
+                            <input class="form-control" id="encoding" name="encoding" value="{{ values.encoding or 'utf-8-sig' }}" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="header_row" class="form-label">Header Row</label>
+                            <input class="form-control" id="header_row" name="header_row" type="number" min="1" value="{{ values.header_row or 1 }}" required>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="row_filters" class="form-label">Row Filters JSON</label>
+                        <textarea class="form-control import-json-editor" id="row_filters" name="row_filters" rows="6">{{ values.row_filters_text }}</textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label for="mappings" class="form-label">Mappings JSON</label>
+                        <textarea class="form-control import-json-editor" id="mappings" name="mappings" rows="12">{{ values.mappings_text }}</textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label for="defaults" class="form-label">Defaults JSON</label>
+                        <textarea class="form-control import-json-editor" id="defaults" name="defaults" rows="8">{{ values.defaults_text }}</textarea>
+                    </div>
+                    <button class="btn btn-primary" type="submit">Save Profile</button>
+                    <a href="{{ url_for('import_profiles') }}" class="btn btn-secondary">Cancel</a>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

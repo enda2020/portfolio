@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import csv
 import html
 import io
+import json
 import os
 import re
 import secrets
@@ -97,6 +98,114 @@ APP_SETTING_LABELS = {
     'daily_reset_time': 'Daily Reset Time',
     'daily_reset_timezone': 'Daily Reset Timezone',
 }
+IMPORT_PROFILE_DEFAULTS = [
+    {
+        'name': 'monex_stock',
+        'instrument_type': 'stock',
+        'encoding': 'cp932',
+        'header_row': 2,
+        'row_filters': [
+            {'column': '商品', 'equals': '株式'},
+            {'column': '取引', 'in': ['お買付', 'ご売却']},
+        ],
+        'mappings': {
+            'symbol': {'column': '銘柄コード', 'transform': 'monex_jp_symbol'},
+            'name': {'column': '銘柄名'},
+            'trade_type': {'column': '取引', 'map': {'お買付': 'BUY', 'ご売却': 'SELL'}},
+            'quantity': {'column': '数量（株/口）/返済数量', 'transform': 'number'},
+            'price': {'column': '単価/返済約定単価', 'transform': 'number'},
+            'trade_date': {'column': '約定日', 'transform': 'date_slash'},
+            'fee_amount': {'columns': ['手数料', '税金(手数料消費税及び譲渡益税)'], 'transform': 'abs_sum'},
+        },
+        'defaults': {
+            'currency': 'JPY',
+            'broker': 'Monex',
+            'account_name': 'Default',
+            'tax_status': 'Taxable',
+            'fee_currency': 'JPY',
+        },
+    },
+    {
+        'name': 'monex_mutual_fund',
+        'instrument_type': 'mutual_fund',
+        'encoding': 'cp932',
+        'header_row': 2,
+        'row_filters': [
+            {'column': '商品', 'equals': '投信'},
+            {'column': '取引', 'in': ['お買付', 'ご売却', '再投資買付']},
+        ],
+        'mappings': {
+            'fund_code': {'column': '銘柄コード', 'transform': 'strip'},
+            'fund_name': {'column': '銘柄名'},
+            'transaction_type': {'column': '取引', 'map': {'お買付': 'BUY', 'ご売却': 'SELL', '再投資買付': 'BUY'}},
+            'executed_units': {'column': '数量（株/口）/返済数量', 'transform': 'number'},
+            'nav_per_10000': {'column': '単価/返済約定単価', 'transform': 'number'},
+            'trade_date': {'column': '約定日', 'transform': 'date_slash'},
+        },
+        'defaults': {
+            'currency': 'JPY',
+            'broker': 'Monex',
+            'account_name': 'Default',
+            'tax_status': 'Taxable',
+        },
+    },
+    {
+        'name': 'monex_foreign_stock',
+        'instrument_type': 'stock',
+        'encoding': 'cp932',
+        'header_row': 2,
+        'row_filters': [
+            {'column': '商品', 'equals': '外国株式'},
+            {'column': '取引', 'in': ['お買付', 'ご売却']},
+        ],
+        'mappings': {
+            'symbol': {'column': '銘柄コード', 'transform': 'strip'},
+            'name': {'column': '銘柄名'},
+            'trade_type': {'column': '取引', 'map': {'お買付': 'BUY', 'ご売却': 'SELL'}},
+            'quantity': {'column': '数量（株/口）/返済数量', 'transform': 'number'},
+            'price': {'column': '単価/返済約定単価', 'transform': 'number'},
+            'currency': {'column': '単価/返済約定単価', 'transform': 'currency_from_value'},
+            'trade_date': {'column': '約定日', 'transform': 'date_slash'},
+            'fee_amount': {'columns': ['手数料', '税金(手数料消費税及び譲渡益税)', '諸経費'], 'transform': 'abs_sum'},
+        },
+        'defaults': {
+            'currency': 'USD',
+            'broker': 'Monex',
+            'account_name': 'Default',
+            'tax_status': 'Taxable',
+            'fee_currency': 'USD',
+        },
+    },
+    {
+        'name': 'monex_dividend',
+        'instrument_type': 'dividend',
+        'encoding': 'cp932',
+        'header_row': 2,
+        'row_filters': [
+            {'column': '取引', 'in': ['分配金', '配当金']},
+        ],
+        'mappings': {
+            'symbol': {'column': '銘柄コード', 'transform': 'strip'},
+            'name': {'column': '銘柄名'},
+            'payment_date': {'column': '受渡日', 'transform': 'date_slash'},
+            'currency': {'column': '単価/返済約定単価', 'transform': 'currency_from_value'},
+            'quantity': {'column': '数量（株/口）/返済数量', 'transform': 'number'},
+            'amount_per_share': {'column': '単価/返済約定単価', 'transform': 'number'},
+            'gross_amount': {'column': '利金・分配金・償還金', 'transform': 'number_zero_none'},
+            'tax_withheld': {'column': '税金(手数料消費税及び譲渡益税)', 'transform': 'abs_number'},
+            'foreign_tax_withheld': {'column': '手数料', 'transform': 'abs_number'},
+        },
+        'defaults': {
+            'currency': 'JPY',
+            'broker': 'Monex',
+            'account_name': 'Default',
+            'tax_status': 'Taxable',
+            'source_country': 'JP',
+            'security_type': 'mutual_fund',
+            'tax_treatment': 'undecided',
+        },
+    },
+]
 
 def _parse_daily_reset_time(value):
     try:
@@ -1245,6 +1354,380 @@ def _json_to_form_payload(payload):
         for key, value in payload.items()
     }
 
+def _insert_import_profile(profile):
+    with sqlite3.connect(DATABASE) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO import_profiles (name, instrument_type, encoding, header_row, row_filters, mappings, defaults)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                profile['name'],
+                profile['instrument_type'],
+                profile.get('encoding') or 'utf-8-sig',
+                int(profile.get('header_row') or 1),
+                json.dumps(profile.get('row_filters') or [], ensure_ascii=False),
+                json.dumps(profile.get('mappings') or {}, ensure_ascii=False),
+                json.dumps(profile.get('defaults') or {}, ensure_ascii=False),
+            )
+        )
+        return cursor.lastrowid
+
+def _profile_from_row(row):
+    profile = dict(row)
+    for key, fallback in [('row_filters', []), ('mappings', {}), ('defaults', {})]:
+        try:
+            profile[key] = json.loads(profile.get(key) or '')
+        except (TypeError, json.JSONDecodeError):
+            profile[key] = fallback
+    return profile
+
+def _fetch_import_profiles():
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute('SELECT * FROM import_profiles ORDER BY name').fetchall()
+    return [_profile_from_row(row) for row in rows]
+
+def _fetch_import_profile(profile_id):
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute('SELECT * FROM import_profiles WHERE id = ?', (profile_id,)).fetchone()
+    return _profile_from_row(row) if row else None
+
+def _parse_import_profile_form(form):
+    errors = []
+    profile = {
+        'name': form.get('name', '').strip(),
+        'instrument_type': form.get('instrument_type', '').strip(),
+        'encoding': form.get('encoding', 'utf-8-sig').strip() or 'utf-8-sig',
+        'header_row': form.get('header_row', '1').strip() or '1',
+        'row_filters': [],
+        'mappings': {},
+        'defaults': {},
+    }
+    if not profile['name']:
+        errors.append("Profile name is required.")
+    if profile['instrument_type'] not in ['stock', 'mutual_fund', 'dividend']:
+        errors.append("Instrument type must be stock, mutual_fund, or dividend.")
+    try:
+        profile['header_row'] = int(profile['header_row'])
+        if profile['header_row'] < 1:
+            errors.append("Header row must be 1 or greater.")
+    except ValueError:
+        errors.append("Header row must be a number.")
+        profile['header_row'] = 1
+    for field, fallback in [('row_filters', []), ('mappings', {}), ('defaults', {})]:
+        raw_value = form.get(field, '').strip()
+        if not raw_value:
+            profile[field] = fallback
+            continue
+        try:
+            profile[field] = json.loads(raw_value)
+        except json.JSONDecodeError as exc:
+            errors.append(f"{field.replace('_', ' ').title()} JSON is invalid: {exc.msg}.")
+    if not isinstance(profile['row_filters'], list):
+        errors.append("Row filters must be a JSON array.")
+    if not isinstance(profile['mappings'], dict):
+        errors.append("Mappings must be a JSON object.")
+    if not isinstance(profile['defaults'], dict):
+        errors.append("Defaults must be a JSON object.")
+    return profile, errors
+
+def _clean_import_number(value):
+    value = re.sub(r'\([^)]*\)', '', str(value or '')).strip().replace(',', '')
+    if value in ['', '-']:
+        return None
+    return float(value)
+
+def _apply_import_transform(value, transform):
+    if isinstance(value, list):
+        values = [_clean_import_number(item) or 0 for item in value]
+        if transform == 'abs_sum':
+            return abs(sum(values))
+        return sum(values)
+    value = str(value or '').strip()
+    if transform == 'strip':
+        return value
+    if transform == 'number':
+        return _clean_import_number(value)
+    if transform == 'number_zero_none':
+        number = _clean_import_number(value)
+        return None if number == 0 else number
+    if transform == 'abs_number':
+        number = _clean_import_number(value)
+        return abs(number) if number is not None else None
+    if transform == 'currency_from_value':
+        upper_value = value.upper()
+        if '(USD)' in upper_value or 'USD' in upper_value:
+            return 'USD'
+        if '(JPY)' in upper_value or 'JPY' in upper_value:
+            return 'JPY'
+        return 'JPY'
+    if transform == 'date_slash':
+        return datetime.strptime(value, '%Y/%m/%d').strftime('%Y-%m-%d') if value else ''
+    if transform == 'monex_jp_symbol':
+        symbol = value.strip()
+        if len(symbol) == 5 and symbol.endswith('0') and symbol.isdigit():
+            symbol = symbol[:-1]
+        return symbol
+    return value
+
+def _row_matches_import_profile(row, profile):
+    for row_filter in profile.get('row_filters') or []:
+        value = str(row.get(row_filter.get('column'), '') or '').strip()
+        if 'equals' in row_filter and value != str(row_filter['equals']).strip():
+            return False
+        if 'not_equals' in row_filter and value == str(row_filter['not_equals']).strip():
+            return False
+        if 'contains' in row_filter and str(row_filter['contains']) not in value:
+            return False
+        if 'in' in row_filter and value not in [str(item).strip() for item in row_filter['in']]:
+            return False
+        if 'not_in' in row_filter and value in [str(item).strip() for item in row_filter['not_in']]:
+            return False
+    return True
+
+def _map_import_row(row, profile):
+    values = dict(profile.get('defaults') or {})
+    for target_field, rule in (profile.get('mappings') or {}).items():
+        if isinstance(rule, str):
+            raw_value = row.get(rule, '')
+            transform = None
+            value_map = None
+        else:
+            columns = rule.get('columns')
+            raw_value = [row.get(column, '') for column in columns] if columns else row.get(rule.get('column'), '')
+            transform = rule.get('transform')
+            value_map = rule.get('map')
+        value = _apply_import_transform(raw_value, transform)
+        if value_map is not None:
+            value = value_map.get(str(value).strip(), value)
+        values[target_field] = value
+    return values
+
+def _read_csv_rows_for_import(file_storage, profile):
+    data = file_storage.stream.read()
+    file_storage.stream.seek(0)
+    text = data.decode(profile.get('encoding') or 'utf-8-sig')
+    rows = list(csv.reader(io.StringIO(text)))
+    header_index = int(profile.get('header_row') or 1) - 1
+    if header_index >= len(rows):
+        raise ValueError("Header row is beyond the end of the file.")
+    headers = rows[header_index]
+    return [
+        dict(zip(headers, row))
+        for row in rows[header_index + 1:]
+        if any(str(cell).strip() for cell in row)
+    ]
+
+def _stock_trade_exists(values):
+    with sqlite3.connect(DATABASE) as conn:
+        return conn.execute(
+            """
+            SELECT 1
+            FROM trades
+            WHERE symbol = ?
+              AND name = ?
+              AND trade_type = ?
+              AND quantity IS ?
+              AND price IS ?
+              AND currency = ?
+              AND trade_date = ?
+              AND broker = ?
+              AND account_name = ?
+              AND tax_status = ?
+              AND fx_rate IS ?
+              AND fee_amount IS ?
+              AND fee_currency IS ?
+            LIMIT 1
+            """,
+            (
+                values['symbol'],
+                values['name'],
+                values['trade_type'],
+                values['quantity'],
+                values['price'],
+                values['currency'],
+                values['trade_date'],
+                values['broker'],
+                values['account_name'],
+                values['tax_status'],
+                values['fx_rate'],
+                values['fee_amount'],
+                values['fee_currency'],
+            )
+        ).fetchone() is not None
+
+def _mutual_fund_trade_exists(values):
+    with sqlite3.connect(DATABASE) as conn:
+        return conn.execute(
+            """
+            SELECT 1
+            FROM mutual_fund_trades
+            WHERE fund_code = ?
+              AND fund_name = ?
+              AND transaction_type = ?
+              AND transaction_detail IS ?
+              AND account_type IS ?
+              AND account_name = ?
+              AND tax_status = ?
+              AND currency = ?
+              AND executed_units IS ?
+              AND nav_per_10000 IS ?
+              AND trade_date = ?
+              AND settlement_date IS ?
+              AND settlement_amount IS ?
+              AND broker = ?
+              AND fx_rate IS ?
+            LIMIT 1
+            """,
+            (
+                values['fund_code'],
+                values['fund_name'],
+                values['transaction_type'],
+                values['transaction_detail'],
+                values['account_type'],
+                values['account_name'],
+                values['tax_status'],
+                values['currency'],
+                values['executed_units'],
+                values['nav_per_10000'],
+                values['trade_date'],
+                values['settlement_date'],
+                values['settlement_amount'],
+                values['broker'],
+                values['fx_rate'],
+            )
+        ).fetchone() is not None
+
+def _dividend_exists(values):
+    with sqlite3.connect(DATABASE) as conn:
+        return conn.execute(
+            """
+            SELECT 1
+            FROM dividends
+            WHERE symbol = ?
+              AND name = ?
+              AND payment_date = ?
+              AND currency = ?
+              AND gross_amount IS ?
+              AND tax_withheld IS ?
+              AND foreign_tax_withheld IS ?
+              AND japanese_income_tax_withheld IS ?
+              AND japanese_local_tax_withheld IS ?
+              AND deductible_interest IS ?
+              AND quantity IS ?
+              AND amount_per_share IS ?
+              AND source_country = ?
+              AND security_type = ?
+              AND tax_treatment = ?
+              AND broker = ?
+              AND account_name = ?
+              AND tax_status = ?
+              AND fx_rate IS ?
+              AND notes = ?
+            LIMIT 1
+            """,
+            (
+                values['symbol'],
+                values['name'],
+                values['payment_date'],
+                values['currency'],
+                values['gross_amount'],
+                values['tax_withheld'],
+                values['foreign_tax_withheld'],
+                values['japanese_income_tax_withheld'],
+                values['japanese_local_tax_withheld'],
+                values['deductible_interest'],
+                values['quantity'],
+                values['amount_per_share'],
+                values['source_country'],
+                values['security_type'],
+                values['tax_treatment'],
+                values['broker'],
+                values['account_name'],
+                values['tax_status'],
+                values['fx_rate'],
+                values['notes'],
+            )
+        ).fetchone() is not None
+
+def _format_import_duplicate(profile, row_number, values):
+    instrument_type = profile.get('instrument_type')
+    if instrument_type == 'stock':
+        return (
+            f"Row {row_number}: stock {values['trade_type']} {values['symbol']} "
+            f"{values['quantity']:g} @ {values['price']:g} {values['currency']} on {values['trade_date']} "
+            f"({values['broker']} / {values['account_name']} / {values['tax_status']})"
+        )
+    if instrument_type == 'mutual_fund':
+        return (
+            f"Row {row_number}: mutual fund {values['transaction_type']} {values['fund_code']} "
+            f"{values['executed_units']:g} units @ {values['nav_per_10000']:g} JPY on {values['trade_date']} "
+            f"({values['broker']} / {values['account_name']} / {values['tax_status']})"
+        )
+    if instrument_type == 'dividend':
+        return (
+            f"Row {row_number}: dividend {values['symbol']} {values['gross_amount']:g} {values['currency']} "
+            f"paid {values['payment_date']} ({values['broker']} / {values['account_name']} / {values['tax_status']})"
+        )
+    return f"Row {row_number}: duplicate record"
+
+def _import_rows_with_profile(file_storage, profile):
+    rows = _read_csv_rows_for_import(file_storage, profile)
+    imported = 0
+    skipped = 0
+    duplicates = 0
+    duplicate_details = []
+    errors = []
+    for index, row in enumerate(rows, start=int(profile.get('header_row') or 1) + 1):
+        if not _row_matches_import_profile(row, profile):
+            skipped += 1
+            continue
+        values = _map_import_row(row, profile)
+        payload = _json_to_form_payload(values)
+        try:
+            if profile['instrument_type'] == 'stock':
+                parsed, row_errors = _parse_trade_form(payload)
+                if row_errors:
+                    errors.extend(f"Row {index}: {error}" for error in row_errors)
+                    continue
+                if _stock_trade_exists(parsed):
+                    duplicates += 1
+                    duplicate_details.append(_format_import_duplicate(profile, index, parsed))
+                    continue
+                _insert_stock_trade(parsed)
+            elif profile['instrument_type'] == 'mutual_fund':
+                parsed, row_errors = _parse_mutual_fund_trade_form(payload)
+                if row_errors:
+                    errors.extend(f"Row {index}: {error}" for error in row_errors)
+                    continue
+                if _mutual_fund_trade_exists(parsed):
+                    duplicates += 1
+                    duplicate_details.append(_format_import_duplicate(profile, index, parsed))
+                    continue
+                _insert_mutual_fund_trade(parsed)
+            elif profile['instrument_type'] == 'dividend':
+                parsed, row_errors = _parse_dividend_form(payload)
+                if row_errors:
+                    errors.extend(f"Row {index}: {error}" for error in row_errors)
+                    continue
+                if _dividend_exists(parsed):
+                    duplicates += 1
+                    duplicate_details.append(_format_import_duplicate(profile, index, parsed))
+                    continue
+                _insert_dividend(parsed)
+            imported += 1
+        except Exception as exc:
+            errors.append(f"Row {index}: {exc}")
+    return {
+        'imported': imported,
+        'skipped': skipped,
+        'duplicates': duplicates,
+        'duplicate_details': duplicate_details,
+        'errors': errors,
+    }
+
 def _insert_stock_trade(values):
     with sqlite3.connect(DATABASE) as conn:
         cursor = conn.execute(
@@ -1498,19 +1981,26 @@ def _dividend_filter_query(filters):
     return where, params
 
 def _calculate_dividend_income_summary():
-    current_year = _portfolio_day_str()[:4]
+    portfolio_day = _portfolio_day()
+    current_year = str(portfolio_day.year)
     with sqlite3.connect(DATABASE) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute('SELECT * FROM dividends ORDER BY payment_date DESC, id DESC').fetchall()
 
     dividends = [_dividend_api_row(row) for row in rows]
 
-    def summarize(items):
+    def summarize(items, monthly_divisor=None):
         known_income = [item['dividend_income_amount_jpy'] for item in items if item['dividend_income_amount_jpy'] is not None]
         known_net = [item['net_amount_jpy'] for item in items if item['net_amount_jpy'] is not None]
+        income_jpy = sum(known_income)
+        net_jpy = sum(known_net)
+        monthly_divisor = monthly_divisor or 0
         return {
-            'income_jpy': sum(known_income),
-            'net_jpy': sum(known_net),
+            'income_jpy': income_jpy,
+            'net_jpy': net_jpy,
+            'avg_monthly_income_jpy': income_jpy / monthly_divisor if monthly_divisor else 0,
+            'avg_monthly_net_jpy': net_jpy / monthly_divisor if monthly_divisor else 0,
+            'avg_monthly_months': monthly_divisor,
             'count': len(items),
             'missing_fx_count': sum(1 for item in items if item['dividend_income_amount_jpy'] is None),
         }
@@ -1521,7 +2011,7 @@ def _calculate_dividend_income_summary():
     ]
     return {
         'year': current_year,
-        'ytd': summarize(ytd_dividends),
+        'ytd': summarize(ytd_dividends, portfolio_day.month),
         'all_time': summarize(dividends),
     }
 
@@ -1751,6 +2241,42 @@ def init_db():
         ]:
             if column_name not in dividend_columns:
                 conn.execute(f"ALTER TABLE dividends ADD COLUMN {column_name} {column_definition}")
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS import_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                instrument_type TEXT NOT NULL,
+                encoding TEXT NOT NULL DEFAULT 'utf-8-sig',
+                header_row INTEGER NOT NULL DEFAULT 1,
+                row_filters TEXT NOT NULL DEFAULT '[]',
+                mappings TEXT NOT NULL DEFAULT '{}',
+                defaults TEXT NOT NULL DEFAULT '{}'
+            )
+        ''')
+        for profile in IMPORT_PROFILE_DEFAULTS:
+            conn.execute(
+                """
+                INSERT INTO import_profiles
+                    (name, instrument_type, encoding, header_row, row_filters, mappings, defaults)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    instrument_type = excluded.instrument_type,
+                    encoding = excluded.encoding,
+                    header_row = excluded.header_row,
+                    row_filters = excluded.row_filters,
+                    mappings = excluded.mappings,
+                    defaults = excluded.defaults
+                """,
+                (
+                    profile['name'],
+                    profile['instrument_type'],
+                    profile.get('encoding') or 'utf-8-sig',
+                    int(profile.get('header_row') or 1),
+                    json.dumps(profile.get('row_filters') or [], ensure_ascii=False),
+                    json.dumps(profile.get('mappings') or {}, ensure_ascii=False),
+                    json.dumps(profile.get('defaults') or {}, ensure_ascii=False),
+                )
+            )
         conn.execute('''
             CREATE TABLE IF NOT EXISTS config_options (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3825,11 +4351,91 @@ def export_trades():
         flash(f'An error occurred during export: {e}', 'danger')
         return redirect(url_for('list_trades'))
 
-@app.route('/bulk_upload', methods=['GET', 'POST'])
-def bulk_upload():
+def _import_profile_form_values(profile=None):
+    profile = profile or {}
+    values = dict(profile)
+    values['row_filters_text'] = json.dumps(profile.get('row_filters') or [], ensure_ascii=False, indent=2)
+    values['mappings_text'] = json.dumps(profile.get('mappings') or {}, ensure_ascii=False, indent=2)
+    values['defaults_text'] = json.dumps(profile.get('defaults') or {}, ensure_ascii=False, indent=2)
+    return values
+
+@app.route('/import_profiles')
+def import_profiles():
+    return render_template('import_profiles.html', profiles=_fetch_import_profiles())
+
+@app.route('/import_profiles/add', methods=['GET', 'POST'])
+def add_import_profile():
     if request.method == 'POST':
         _validate_csrf_token()
-        config_options = get_config_options()
+        profile, errors = _parse_import_profile_form(request.form)
+        if errors:
+            for error in errors:
+                flash(error, 'danger')
+            return render_template('import_profile_form.html', profile_id=None, values=_import_profile_form_values(profile))
+        try:
+            _insert_import_profile(profile)
+            flash('Import profile saved.', 'success')
+            return redirect(url_for('import_profiles'))
+        except sqlite3.IntegrityError:
+            flash('An import profile with that name already exists.', 'danger')
+            return render_template('import_profile_form.html', profile_id=None, values=_import_profile_form_values(profile))
+    return render_template('import_profile_form.html', profile_id=None, values=_import_profile_form_values())
+
+@app.route('/import_profiles/<int:profile_id>/edit', methods=['GET', 'POST'])
+def edit_import_profile(profile_id):
+    profile = _fetch_import_profile(profile_id)
+    if profile is None:
+        abort(404)
+    if request.method == 'POST':
+        _validate_csrf_token()
+        profile, errors = _parse_import_profile_form(request.form)
+        if errors:
+            for error in errors:
+                flash(error, 'danger')
+            return render_template('import_profile_form.html', profile_id=profile_id, values=_import_profile_form_values(profile))
+        try:
+            with sqlite3.connect(DATABASE) as conn:
+                cursor = conn.execute(
+                    """
+                    UPDATE import_profiles
+                    SET name = ?, instrument_type = ?, encoding = ?, header_row = ?, row_filters = ?, mappings = ?, defaults = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        profile['name'],
+                        profile['instrument_type'],
+                        profile.get('encoding') or 'utf-8-sig',
+                        int(profile.get('header_row') or 1),
+                        json.dumps(profile.get('row_filters') or [], ensure_ascii=False),
+                        json.dumps(profile.get('mappings') or {}, ensure_ascii=False),
+                        json.dumps(profile.get('defaults') or {}, ensure_ascii=False),
+                        profile_id,
+                    )
+                )
+                if cursor.rowcount == 0:
+                    abort(404)
+            flash('Import profile updated.', 'success')
+            return redirect(url_for('import_profiles'))
+        except sqlite3.IntegrityError:
+            flash('An import profile with that name already exists.', 'danger')
+            return render_template('import_profile_form.html', profile_id=profile_id, values=_import_profile_form_values(profile))
+    return render_template('import_profile_form.html', profile_id=profile_id, values=_import_profile_form_values(profile))
+
+@app.route('/import_profiles/<int:profile_id>/delete', methods=['POST'])
+def delete_import_profile(profile_id):
+    _validate_csrf_token()
+    with sqlite3.connect(DATABASE) as conn:
+        cursor = conn.execute('DELETE FROM import_profiles WHERE id = ?', (profile_id,))
+    if cursor.rowcount == 0:
+        abort(404)
+    flash('Import profile deleted.', 'success')
+    return redirect(url_for('import_profiles'))
+
+@app.route('/bulk_upload', methods=['GET', 'POST'])
+def bulk_upload():
+    profiles = _fetch_import_profiles()
+    if request.method == 'POST':
+        _validate_csrf_token()
         if 'file' not in request.files:
             flash('No file part in the request.', 'danger')
             return redirect(request.url)
@@ -3837,109 +4443,53 @@ def bulk_upload():
         if file.filename == '':
             flash('No file selected for uploading.', 'danger')
             return redirect(request.url)
+        selected_profile_ids = [int(profile_id) for profile_id in request.form.getlist('profile_ids') if profile_id.isdigit()]
+        if not selected_profile_ids:
+            flash('Choose at least one import profile.', 'danger')
+            return redirect(request.url)
         if file and file.filename.endswith('.csv'):
-            try:
-                # Read the file in memory to avoid saving it to disk
-                stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
-                csv_reader = csv.DictReader(stream)
-                
-                trades_to_add = []
-                errors = []
-                required_columns = ['symbol', 'name', 'trade_type', 'quantity', 'price', 'currency', 'trade_date', 'broker']
-
-                for i, row in enumerate(csv_reader):
-                    row_num = i + 2  # Account for header row
-
-                    # Check for missing required columns
-                    missing_cols = [col for col in required_columns if col not in row or not row[col]]
-                    if missing_cols:
-                        errors.append(f"Row {row_num}: Missing required data for column(s): {', '.join(missing_cols)}")
-                        continue
-
-                    try:
-                        trade_type = row['trade_type'].upper()
-                        if trade_type not in ['BUY', 'SELL']:
-                            errors.append(f"Row {row_num}: Invalid trade_type '{row['trade_type']}'. Must be 'BUY' or 'SELL'.")
-                            continue
-
-                        currency = row['currency'].upper()
-                        if currency not in ['USD', 'JPY']:
-                            errors.append(f"Row {row_num}: Invalid currency '{row['currency']}'. Must be 'USD' or 'JPY'.")
-                            continue
-                        broker = row['broker'].strip()
-                        if broker not in config_options['broker']:
-                            errors.append(f"Row {row_num}: Broker '{broker}' is not configured.")
-                            continue
-                        account_name = row.get('account_name', '').strip() or config_options['account_name'][0]
-                        if account_name not in config_options['account_name']:
-                            errors.append(f"Row {row_num}: Account name '{account_name}' is not configured.")
-                            continue
-                        tax_status = row.get('tax_status', '').strip() or config_options['tax_status'][0]
-                        if tax_status not in config_options['tax_status']:
-                            errors.append(f"Row {row_num}: Tax status '{tax_status}' is not configured.")
-                            continue
-                        
-                        quantity = float(row['quantity'])
-                        price = float(row['price'])
-                        if quantity <= 0 or price < 0:
-                             errors.append(f"Row {row_num}: Quantity must be positive and price cannot be negative.")
-                             continue
-
-                        # Safely process optional values
-                        fx_rate_str = row.get('fx_rate', '').strip()
-                        fee_amount_str = row.get('fee_amount', '').strip()
-                        fee_currency_str = row.get('fee_currency', '').strip()
-
-                        trades_to_add.append({
-                            'symbol': row['symbol'].strip().upper(), 'name': row['name'], 'trade_type': trade_type,
-                            'quantity': quantity, 'price': price, 'currency': currency, 
-                            'trade_date': row['trade_date'], 'broker': broker,
-                            'account_name': account_name, 'tax_status': tax_status,
-                            'fx_rate': float(fx_rate_str) if fx_rate_str else None,
-                            'fee_amount': float(fee_amount_str) if fee_amount_str else None,
-                            'fee_currency': fee_currency_str.upper() if fee_currency_str else None,
-                        })
-                    except (ValueError, TypeError) as ve:
-                        errors.append(f"Row {row_num}: Invalid number format. Please check quantity, price, and other numeric fields. Error: {ve}")
-
-                if errors:
-                    for error in errors:
-                        flash(error, 'danger')
-                    return redirect(request.url)
-
-                # If no errors, proceed with DB insertion
-                if trades_to_add:
-                    with sqlite3.connect(DATABASE) as conn:
-                        for trade in trades_to_add:
-                            conn.execute(
-                                'INSERT INTO trades (symbol, name, trade_type, quantity, price, currency, trade_date, broker, account_name, tax_status, fx_rate, fee_amount, fee_currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                                (
-                                    trade['symbol'],
-                                    trade['name'],
-                                    trade['trade_type'],
-                                    trade['quantity'],
-                                    trade['price'],
-                                    trade['currency'],
-                                    trade['trade_date'],
-                                    trade['broker'],
-                                    trade['account_name'],
-                                    trade['tax_status'],
-                                    trade['fx_rate'],
-                                    trade['fee_amount'],
-                                    trade['fee_currency']
-                                )
-                            )
-                    flash(f'Successfully uploaded and inserted {len(trades_to_add)} trades!', 'success')
-                    return redirect(url_for('list_trades'))
-
-            except Exception as e:
-                flash(f'An error occurred while processing the file: {e}', 'danger')
-                return redirect(request.url)
+            total_imported = 0
+            profile_summaries = []
+            duplicate_details = []
+            all_errors = []
+            for profile_id in selected_profile_ids:
+                profile = _fetch_import_profile(profile_id)
+                if not profile:
+                    all_errors.append(f"Profile {profile_id} was not found.")
+                    continue
+                try:
+                    result = _import_rows_with_profile(file, profile)
+                    total_imported += result['imported']
+                    profile_summaries.append(
+                        f"{profile['name']}: {result['imported']} imported, {result['duplicates']} duplicates ignored, {result['skipped']} skipped"
+                    )
+                    duplicate_details.extend(
+                        f"{profile['name']}: {detail}"
+                        for detail in result['duplicate_details']
+                    )
+                    all_errors.extend(f"{profile['name']}: {error}" for error in result['errors'])
+                except Exception as e:
+                    all_errors.append(f"{profile['name']}: {e}")
+            if all_errors:
+                for error in all_errors[:20]:
+                    flash(error, 'danger')
+                if len(all_errors) > 20:
+                    flash(f"{len(all_errors) - 20} additional import errors were hidden.", 'warning')
+            for summary in profile_summaries:
+                flash(summary, 'info')
+            if duplicate_details:
+                for detail in duplicate_details[:50]:
+                    flash(f"Duplicate ignored: {detail}", 'secondary')
+                if len(duplicate_details) > 50:
+                    flash(f"{len(duplicate_details) - 50} additional duplicate records were hidden.", 'warning')
+            if total_imported:
+                flash(f'Successfully imported {total_imported} records.', 'success')
+            return redirect(request.url)
         else:
             flash('Invalid file type. Please upload a CSV file.', 'warning')
             return redirect(request.url)
 
-    return render_template('bulk_upload.html')
+    return render_template('bulk_upload.html', profiles=profiles)
 
 # Initialize database on startup.
 # This ensures the necessary tables exist before the app starts.

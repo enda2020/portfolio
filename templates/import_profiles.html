@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block title %}Import Profiles{% endblock %}
+
+{% block content %}
+<div class="page-toolbar d-flex justify-content-between align-items-center mb-4">
+    <h1>Import Profiles</h1>
+    <div class="page-actions">
+        <a href="{{ url_for('add_import_profile') }}" class="btn btn-primary">Add Profile</a>
+        <a href="{{ url_for('bulk_upload') }}" class="btn btn-outline-info ms-2">Import CSV</a>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        {% if profiles %}
+        <div class="table-responsive">
+            <table class="table table-hover table-dark mb-0">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Instrument</th>
+                        <th>Encoding</th>
+                        <th>Header Row</th>
+                        <th>Filters</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for profile in profiles %}
+                    <tr>
+                        <td><strong>{{ profile.name }}</strong></td>
+                        <td>{{ profile.instrument_type|replace('_', ' ')|title }}</td>
+                        <td>{{ profile.encoding }}</td>
+                        <td>{{ profile.header_row }}</td>
+                        <td><code>{{ profile.row_filters|tojson }}</code></td>
+                        <td>
+                            <a href="{{ url_for('edit_import_profile', profile_id=profile.id) }}" class="btn btn-sm btn-outline-primary">Edit</a>
+                            <form method="POST" action="{{ url_for('delete_import_profile', profile_id=profile.id) }}" class="d-inline" onsubmit="return confirm('Delete this import profile?')">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center p-5 text-muted">No import profiles yet.</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

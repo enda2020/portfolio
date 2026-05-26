@@ -19,3 +19,4 @@ cache/
 holdings.db
 data/
 *.sqlite3
+*.csv
