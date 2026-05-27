@@ -34,6 +34,13 @@ A web application for tracking a stock portfolio by logging individual trades. I
 
 ## Getting Started
 
+For day-to-day usage instructions, see the local wiki:
+
+- [Wiki Home](docs/wiki/Home.md)
+- [Usage Guide](docs/wiki/Usage.md)
+- [Import Profiles](docs/wiki/Import-Profiles.md)
+- [Troubleshooting](docs/wiki/Troubleshooting.md)
+
 ### Initial Setup
 
 Before running the application, you need to create an environment file to store your secret key.
