@@ -59,7 +59,8 @@ After the app is running, use `Tools -> Config` to manage:
 3. Review the dashboard on `Home`.
 4. Use filters for broker, account, tax status, and currency when needed.
 5. Use `Health` to review concentration, performance, dividend summaries, and portfolio history.
-6. Use `Tools -> Tax Report` for year-end realized gain/loss reporting.
+6. Use `Tools -> Corporate Actions` for stock splits before reviewing split-adjusted holdings.
+7. Use `Tools -> Tax Report` for year-end realized gain/loss reporting.
 
 ## Add Stock Or ETF Trades
 
@@ -143,10 +144,6 @@ See [Import Profiles](Import-Profiles.md) for profile details.
 
 The `Home` page shows:
 
-- Total portfolio value
-- Today P&L
-- Unrealized P&L
-- Realized P&L
 - Current holdings
 - Holding-level trade history
 - Watchlist
@@ -157,6 +154,10 @@ Use `Refresh Prices` to clear cached market data and fetch fresh quotes.
 
 The `Health` page shows:
 
+- Total portfolio value
+- Today P&L
+- Unrealized P&L
+- Realized P&L
 - Concentration checks
 - Sector exposure
 - Rebalance ideas
@@ -166,6 +167,41 @@ The `Health` page shows:
 - P&L history
 
 Use `Health -> Settings` to tune concentration thresholds.
+
+## Corporate Actions
+
+Go to `Tools -> Corporate Actions`.
+
+Use the Stock Split workflow for splits such as `1 share -> 10 shares`.
+
+1. Enter the symbol, currency, effective date, and shares multiplier.
+2. Optionally enter a temporary manual price override if Yahoo Finance has not adjusted its quote yet.
+3. Click `Preview`.
+4. Review each affected pre-effective-date trade.
+5. Tick the confirmation box and click `Apply Split`.
+
+The split tool updates stock/ETF trades before the effective date by:
+
+- Multiplying quantity by the split multiplier
+- Dividing price by the split multiplier
+- Leaving trade dates, brokers, accounts, tax status, FX rates, and fees unchanged
+- Recording the corporate action so the same symbol/date/ratio cannot be applied twice
+- Clearing cached market data
+
+Do not run the stock split tool on a symbol if you already adjusted those trades manually, unless you first undo the manual edits.
+
+## Data Maintenance
+
+Go to `Tools -> Data Maintenance`.
+
+Use this page to repair market-data and history issues:
+
+- Clear the market-data cache
+- Add or remove manual price overrides for stale or incorrect quotes
+- Recalculate today's portfolio history snapshot
+- Edit or delete recent portfolio history rows
+
+Manual price overrides affect the live dashboard and Health calculations immediately. They are useful after a split when Yahoo Finance is temporarily serving a stale pre-split quote. Remove the override once the live quote source is correct.
 
 ## Tax Report
 

@@ -32,6 +32,38 @@ Refresh Prices
 
 If live market data is unavailable, the app may show cost-basis fallback values and skip the daily history snapshot.
 
+You can also clear cached quotes from:
+
+```text
+Tools -> Data Maintenance -> Clear Market Cache
+```
+
+## Huge P&L Move After A Stock Split
+
+If Yahoo Finance serves an old pre-split quote after you adjusted your trades, the dashboard can show a very large temporary loss.
+
+Use:
+
+```text
+Tools -> Data Maintenance -> Manual Price Overrides
+```
+
+Add an override for the affected symbol, currency, and instrument type with the correct post-split current price. The dashboard and Health page will use the manual quote until you remove it.
+
+Once Yahoo Finance has the correct split-adjusted quote, remove the override and clear the market cache.
+
+## Need To Apply A Stock Split
+
+Use:
+
+```text
+Tools -> Corporate Actions
+```
+
+The Stock Split workflow previews all affected pre-effective-date trades, then applies the split by multiplying quantities and dividing prices.
+
+Do not apply a split if you already manually edited those trades. Applying both manual edits and the corporate action tool will adjust the same trades twice.
+
 ## Today P&L Looks Wrong After A Weekend
 
 The app uses a daily reset time. By default this is 08:30 in Asia/Tokyo.

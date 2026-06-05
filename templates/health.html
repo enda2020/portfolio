@@ -30,6 +30,45 @@
 </div>
 
 <div class="row mb-4">
+    <div class="col-lg-3 col-md-6 mb-4">
+        <div class="card metric-card metric-accent h-100">
+            <div class="card-header">Portfolio Value</div>
+            <div class="card-body">
+                <h3 class="card-title">&yen;<span class="sensitive-data">{{ "{:,.0f}".format(total_value_jpy) }}</span></h3>
+                <p class="card-text text-white-50">approx. $<span class="sensitive-data">{{ "{:,.2f}".format(total_value_usd) }}</span></p>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-3 col-md-6 mb-4">
+        <div class="card metric-card h-100 {{ 'metric-positive' if total_today_pnl_jpy >= 0 else 'metric-negative' }}">
+            <div class="card-header">Today's P&amp;L</div>
+            <div class="card-body">
+                <h3 class="card-title"><span class="sensitive-data">{{- '+' if total_today_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_today_pnl_jpy) }}</span></h3>
+                <p class="card-text text-white-50">approx. <span class="sensitive-data">{{ '+' if total_today_pnl_usd >= 0 else '' }}${{ "{:,.2f}".format(total_today_pnl_usd) }}</span></p>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-3 col-md-6 mb-4">
+        <div class="card metric-card h-100 {{ 'metric-positive' if total_unrealized_pnl_jpy >= 0 else 'metric-negative' }}">
+            <div class="card-header">Unrealized</div>
+            <div class="card-body">
+                <h3 class="card-title"><span class="sensitive-data">{{- '+' if total_unrealized_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_unrealized_pnl_jpy) }}</span></h3>
+                <p class="card-text text-white-50">approx. <span class="sensitive-data">{{ '+' if total_unrealized_pnl_usd >= 0 else '' }}${{ "{:,.2f}".format(total_unrealized_pnl_usd) }}</span></p>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-3 col-md-6 mb-4">
+        <div class="card metric-card h-100 {{ 'metric-positive' if total_realized_pnl_jpy >= 0 else 'metric-negative' }}">
+            <div class="card-header">Realized</div>
+            <div class="card-body">
+                <h3 class="card-title"><span class="sensitive-data">{{- '+' if total_realized_pnl_jpy >= 0 else '' }}&yen;{{ "{:,.0f}".format(total_realized_pnl_jpy) }}</span></h3>
+                <p class="card-text text-white-50">approx. <span class="sensitive-data">{{ '+' if total_realized_pnl_usd >= 0 else '' }}${{ "{:,.2f}".format(total_realized_pnl_usd) }}</span></p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
     <div class="col-lg-4 mb-4">
         <div class="card h-100">
             <div class="card-header">Health Score</div>

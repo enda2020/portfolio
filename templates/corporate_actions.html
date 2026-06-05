@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+
+{% block title %}Corporate Actions{% endblock %}
+
+{% block container_class %}container-fluid{% endblock %}
+
+{% block content %}
+<div class="page-toolbar d-flex justify-content-between align-items-center mb-4">
+    <h1>Corporate Actions</h1>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">
+        <h4>Stock Split</h4>
+    </div>
+    <div class="card-body">
+        <form method="POST" class="row g-3 align-items-end">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="action" value="preview_stock_split">
+            <div class="col-md-2">
+                <label for="splitSymbol" class="form-label">Symbol</label>
+                <input id="splitSymbol" class="form-control" name="symbol" value="{{ values.symbol }}" placeholder="2559" required>
+            </div>
+            <div class="col-md-2">
+                <label for="splitCurrency" class="form-label">Currency</label>
+                <select id="splitCurrency" class="form-select" name="currency" required>
+                    <option value="JPY" {% if values.currency == 'JPY' %}selected{% endif %}>JPY</option>
+                    <option value="USD" {% if values.currency == 'USD' %}selected{% endif %}>USD</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label for="splitDate" class="form-label">Effective Date</label>
+                <input id="splitDate" class="form-control" type="date" name="effective_date" value="{{ values.effective_date or current_date }}" required>
+            </div>
+            <div class="col-md-2">
+                <label for="splitRatio" class="form-label">Shares Multiplier</label>
+                <input id="splitRatio" class="form-control" type="number" step="any" min="0.000001" name="ratio" value="{{ values.ratio }}" placeholder="10" required>
+            </div>
+            <div class="col-md-2">
+                <label for="splitOverride" class="form-label">Price Override</label>
+                <input id="splitOverride" class="form-control" type="number" step="any" min="0" name="price_override" value="{{ values.price_override }}" placeholder="Optional">
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary w-100">Preview</button>
+            </div>
+            <div class="col-12">
+                <label for="splitNotes" class="form-label">Notes</label>
+                <input id="splitNotes" class="form-control" name="notes" value="{{ values.notes }}" placeholder="10-for-1 split">
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if preview_rows is not none %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h4>Preview</h4>
+    </div>
+    <div class="card-body">
+        {% if preview_rows %}
+            <div class="table-responsive mb-3">
+                <table class="table table-hover table-dark">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Type</th>
+                            <th>Broker</th>
+                            <th>Account</th>
+                            <th>Quantity</th>
+                            <th>New Quantity</th>
+                            <th>Price</th>
+                            <th>New Price</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in preview_rows %}
+                        <tr>
+                            <td>{{ row.trade_date }}</td>
+                            <td>{{ row.trade_type }}</td>
+                            <td>{{ row.broker }}</td>
+                            <td>{{ row.account_name or 'Default' }}</td>
+                            <td><span class="sensitive-data">{{ "{:,.6g}".format(row.quantity) }}</span></td>
+                            <td><span class="sensitive-data">{{ "{:,.6g}".format(row.new_quantity) }}</span></td>
+                            <td><span class="sensitive-data">{{ '&yen;'|safe if row.currency == 'JPY' else '$' }}{{ "{:,.6g}".format(row.price) }}</span></td>
+                            <td><span class="sensitive-data">{{ '&yen;'|safe if row.currency == 'JPY' else '$' }}{{ "{:,.6g}".format(row.new_price) }}</span></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="action" value="apply_stock_split">
+                <input type="hidden" name="symbol" value="{{ values.symbol }}">
+                <input type="hidden" name="currency" value="{{ values.currency }}">
+                <input type="hidden" name="effective_date" value="{{ values.effective_date }}">
+                <input type="hidden" name="ratio" value="{{ values.ratio }}">
+                <input type="hidden" name="price_override" value="{{ values.price_override }}">
+                <input type="hidden" name="notes" value="{{ values.notes }}">
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" value="yes" id="confirmSplit" name="confirm" required>
+                    <label class="form-check-label" for="confirmSplit">
+                        I reviewed the preview and want to update these trades.
+                    </label>
+                </div>
+                <button type="submit" class="btn btn-danger">Apply Split</button>
+            </form>
+        {% else %}
+            <div class="text-muted">No matching trades to adjust.</div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="card-header">
+        <h4>Applied Actions</h4>
+    </div>
+    <div class="card-body">
+        {% if actions %}
+            <div class="table-responsive">
+                <table class="table table-hover table-dark">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Symbol</th>
+                            <th>Currency</th>
+                            <th>Action</th>
+                            <th>Ratio</th>
+                            <th>Trades</th>
+                            <th>Override</th>
+                            <th>Applied</th>
+                            <th>Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for action in actions %}
+                        <tr>
+                            <td>{{ action.effective_date }}</td>
+                            <td><strong>{{ action.symbol }}</strong></td>
+                            <td>{{ action.currency }}</td>
+                            <td>{{ action.action_type|replace('_', ' ')|title }}</td>
+                            <td>{{ "{:g}".format(action.ratio) }}</td>
+                            <td>{{ action.affected_trades }}</td>
+                            <td>
+                                {% if action.price_override is not none %}
+                                    <span class="sensitive-data">{{ '&yen;'|safe if action.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(action.price_override) }}</span>
+                                {% else %}
+                                    N/A
+                                {% endif %}
+                            </td>
+                            <td>{{ action.applied_at }}</td>
+                            <td>{{ action.notes or '' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="text-muted">No corporate actions recorded.</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

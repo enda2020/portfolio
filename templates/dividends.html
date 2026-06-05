@@ -33,7 +33,7 @@
                 <p class="card-text text-white-50">
                     {{ dividend_income_summary.year }} YTD / {{ dividend_income_summary.ytd.avg_monthly_months }} months
                     {% if dividend_income_summary.ytd.missing_fx_count %}
-                        Â· {{ dividend_income_summary.ytd.missing_fx_count }} missing FX
+                        &middot; {{ dividend_income_summary.ytd.missing_fx_count }} missing FX
                     {% endif %}
                 </p>
             </div>
@@ -161,7 +161,7 @@
     <div class="card-body">
         {% if dividends %}
             <div class="table-responsive">
-                <table class="table table-hover table-dark">
+                <table class="table table-hover table-dark dividends-table">
                     <thead>
                         <tr>
                             <th>Payment Date</th>

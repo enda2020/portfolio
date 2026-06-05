@@ -8,11 +8,13 @@ A web application for tracking a stock portfolio by logging individual trades. I
 - **Mutual Fund Tracking**: Record Japanese mutual fund transactions, edit them later, clone existing entries, and include them in portfolio and tax calculations.
 - **Portfolio Dashboard**:
     - Automatically calculates and displays a summary of your current holdings.
-    - JPY-first view of Total Value, Unrealized P&L, and Realized P&L.
-    - Line chart showing portfolio value history over time.
     - Interactive pie chart to visualize portfolio composition by JPY value, with filters for broker, account, tax status, and currency.
-    - P&L breakdown that separates price/instrument gains from FX impact.
     - Expandable holdings table that opens each row to show current holding detail, a 7-day trend, and the trade history behind that position.
+- **Portfolio Health**:
+    - JPY-first view of Total Value, Today's P&L, Unrealized P&L, and Realized P&L.
+    - Line charts showing portfolio value and unrealized P&L history over time.
+    - P&L breakdown that separates price/instrument gains from FX impact.
+    - Concentration checks, sector exposure, rebalance ideas, performance snapshots, and dividend summaries.
 - **Japanese Tax Reporting**:
     - Generates a detailed, year-end tax report for a selected financial year.
     - Filters reports by broker, account, and taxable/non-taxable status.
@@ -22,6 +24,8 @@ A web application for tracking a stock portfolio by logging individual trades. I
     - Bulk upload trades from a CSV file with robust validation.
     - Export all trades to a CSV file for mass editing or backup.
     - Clone stock/ETF and mutual fund transactions to speed up repeated entries.
+    - Apply stock split corporate actions from a preview screen that adjusts historical quantities and prices, records the action, clears stale cache, and can add a temporary manual price override.
+    - Maintain market-data repairs from Tools -> Data Maintenance, including manual price overrides and portfolio history snapshot edits/deletes.
 - **Configurable Values**:
     - Manage brokers, account names, and tax statuses from Tools -> Config.
     - Store configurable values in SQLite so they persist with the rest of the portfolio data.

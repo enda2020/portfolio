@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+
+{% block title %}Data Maintenance{% endblock %}
+
+{% block container_class %}container-fluid{% endblock %}
+
+{% block content %}
+<div class="page-toolbar d-flex justify-content-between align-items-center mb-4">
+    <h1>Data Maintenance</h1>
+    <div class="page-actions">
+        <form method="POST" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="action" value="clear_market_cache">
+            <button type="submit" class="btn btn-outline-info">Clear Market Cache</button>
+        </form>
+        <form method="POST" class="d-inline ms-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="action" value="recalculate_today_history">
+            <button type="submit" class="btn btn-primary">Recalculate Today</button>
+        </form>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">
+        <h4>Manual Price Overrides</h4>
+    </div>
+    <div class="card-body">
+        <form method="POST" class="row g-3 align-items-end mb-4">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="action" value="save_price_override">
+            <div class="col-md-2">
+                <label for="overrideSymbol" class="form-label">Symbol</label>
+                <input id="overrideSymbol" class="form-control" name="symbol" placeholder="2559" required>
+            </div>
+            <div class="col-md-2">
+                <label for="overrideCurrency" class="form-label">Currency</label>
+                <select id="overrideCurrency" class="form-select" name="currency" required>
+                    <option value="JPY">JPY</option>
+                    <option value="USD">USD</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label for="overrideType" class="form-label">Type</label>
+                <select id="overrideType" class="form-select" name="instrument_type" required>
+                    <option value="stock">Stock / ETF</option>
+                    <option value="mutual_fund">Mutual Fund</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label for="overridePrice" class="form-label">Current Price</label>
+                <input id="overridePrice" class="form-control" type="number" step="any" min="0" name="current_price" required>
+            </div>
+            <div class="col-md-2">
+                <label for="overrideChange" class="form-label">Today Change</label>
+                <input id="overrideChange" class="form-control" type="number" step="any" name="change_today" placeholder="0">
+            </div>
+            <div class="col-md-2">
+                <label for="overrideDate" class="form-label">Quote Date</label>
+                <input id="overrideDate" class="form-control" type="date" name="latest_data_at" value="{{ current_date or '' }}">
+            </div>
+            <div class="col-md-10">
+                <label for="overrideNotes" class="form-label">Notes</label>
+                <input id="overrideNotes" class="form-control" name="notes" placeholder="Temporary split correction">
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary w-100">Save Override</button>
+            </div>
+        </form>
+
+        {% if price_overrides %}
+            <div class="table-responsive">
+                <table class="table table-hover table-dark">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Currency</th>
+                            <th>Type</th>
+                            <th>Price</th>
+                            <th>Today</th>
+                            <th>Quote Date</th>
+                            <th>Notes</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for override in price_overrides %}
+                        <tr>
+                            <td><strong>{{ override.symbol }}</strong></td>
+                            <td>{{ override.currency }}</td>
+                            <td>{{ override.instrument_type|replace('_', ' ')|title }}</td>
+                            <td><span class="sensitive-data">{{ '&yen;'|safe if override.currency == 'JPY' else '$' }}{{ "{:,.2f}".format(override.current_price) }}</span></td>
+                            <td><span class="sensitive-data">{{ "{:+,.2f}".format(override.change_today or 0) }}</span></td>
+                            <td>{{ override.latest_data_at or '' }}</td>
+                            <td>{{ override.notes or '' }}</td>
+                            <td>
+                                <form method="POST" class="d-inline" onsubmit="return confirm('Remove this price override?')">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <input type="hidden" name="action" value="delete_price_override">
+                                    <input type="hidden" name="symbol" value="{{ override.symbol }}">
+                                    <input type="hidden" name="currency" value="{{ override.currency }}">
+                                    <input type="hidden" name="instrument_type" value="{{ override.instrument_type }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="text-muted">No manual price overrides active.</div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h4>Portfolio History</h4>
+    </div>
+    <div class="card-body">
+        {% if history_rows %}
+            <div class="table-responsive">
+                <table class="table table-hover table-dark">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Value USD</th>
+                            <th>Value JPY</th>
+                            <th>Unrealized USD</th>
+                            <th>Unrealized JPY</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in history_rows %}
+                        <tr>
+                            <td>{{ row.date }}</td>
+                            <td>
+                                <input form="history-form-{{ loop.index }}" class="form-control form-control-sm sensitive-data" type="number" step="any" name="value_usd" value="{{ row.value_usd if row.value_usd is not none else '' }}">
+                            </td>
+                            <td>
+                                <input form="history-form-{{ loop.index }}" class="form-control form-control-sm sensitive-data" type="number" step="any" name="value_jpy" value="{{ row.value_jpy if row.value_jpy is not none else '' }}">
+                            </td>
+                            <td>
+                                <input form="history-form-{{ loop.index }}" class="form-control form-control-sm sensitive-data" type="number" step="any" name="unrealized_pnl_usd" value="{{ row.unrealized_pnl_usd if row.unrealized_pnl_usd is not none else '' }}">
+                            </td>
+                            <td>
+                                <input form="history-form-{{ loop.index }}" class="form-control form-control-sm sensitive-data" type="number" step="any" name="unrealized_pnl_jpy" value="{{ row.unrealized_pnl_jpy if row.unrealized_pnl_jpy is not none else '' }}">
+                            </td>
+                            <td class="text-nowrap">
+                                <form id="history-form-{{ loop.index }}" method="POST" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <input type="hidden" name="action" value="update_history">
+                                    <input type="hidden" name="date" value="{{ row.date }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
+                                </form>
+                                <form method="POST" class="d-inline" onsubmit="return confirm('Delete this history row?')">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <input type="hidden" name="action" value="delete_history">
+                                    <input type="hidden" name="date" value="{{ row.date }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="text-center p-5">
+                <h4>No portfolio history rows.</h4>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

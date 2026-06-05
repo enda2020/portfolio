@@ -467,6 +467,9 @@ def get_stock_price(symbol, currency):
     return result
 
 def get_market_price(symbol, currency, instrument_type='stock'):
+    override = _get_market_price_override(symbol, currency, instrument_type)
+    if override:
+        return override
     if instrument_type == 'mutual_fund':
         return get_yahoo_jp_mutual_fund_price(symbol)
     return get_stock_price(symbol, currency)
@@ -1274,6 +1277,262 @@ def _parse_history_days(days=365):
     except (TypeError, ValueError):
         days = 365
     return max(1, min(days, 3650))
+
+def _get_market_price_override(symbol, currency, instrument_type='stock'):
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT symbol, currency, instrument_type, current_price, change_today, latest_data_at
+            FROM market_price_overrides
+            WHERE symbol = ? AND currency = ? AND instrument_type = ?
+            """,
+            (symbol, currency, instrument_type)
+        ).fetchone()
+    if row is None:
+        return None
+
+    current_price = row['current_price']
+    change_today = row['change_today'] or 0.0
+    latest_data_at = row['latest_data_at'] or _portfolio_day_str()
+    try:
+        latest_data_sort = datetime.strptime(latest_data_at, '%Y-%m-%d').timestamp()
+    except ValueError:
+        latest_data_sort = _portfolio_now().timestamp()
+    return {
+        'current_price': current_price,
+        'change_today': change_today,
+        'sparkline_data': [current_price] * 7,
+        'is_valid': True,
+        'latest_data_at': latest_data_at,
+        'latest_data_sort': latest_data_sort,
+        'change_date': latest_data_at[:10],
+        'quote_session': 'manual override',
+        'includes_extended_hours': False,
+    }
+
+def _fetch_market_price_overrides():
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT symbol, currency, instrument_type, current_price, change_today,
+                   latest_data_at, notes, updated_at
+            FROM market_price_overrides
+            ORDER BY updated_at DESC, symbol ASC
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+def _parse_price_override_form(form):
+    values = {
+        'symbol': form.get('symbol', '').strip().upper(),
+        'currency': form.get('currency', '').strip().upper(),
+        'instrument_type': form.get('instrument_type', 'stock').strip() or 'stock',
+        'current_price': None,
+        'change_today': None,
+        'latest_data_at': form.get('latest_data_at', '').strip() or _portfolio_day_str(),
+        'notes': form.get('notes', '').strip(),
+    }
+    errors = []
+    if not values['symbol']:
+        errors.append('Symbol is required.')
+    if values['currency'] not in ['JPY', 'USD']:
+        errors.append('Currency must be JPY or USD.')
+    if values['instrument_type'] not in ['stock', 'mutual_fund']:
+        errors.append('Instrument type must be stock or mutual_fund.')
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', values['latest_data_at']):
+        errors.append('Quote date must be YYYY-MM-DD.')
+    try:
+        values['current_price'] = float(form.get('current_price', ''))
+        if values['current_price'] < 0:
+            errors.append('Current price must be zero or greater.')
+    except ValueError:
+        errors.append('Current price is required.')
+    try:
+        values['change_today'] = _parse_optional_float_field(form, 'change_today')
+    except ValueError:
+        errors.append('Today change must be numeric or blank.')
+    return values, errors
+
+def _fetch_corporate_actions():
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT id, symbol, currency, action_type, effective_date, ratio,
+                   affected_trades, price_override, notes, applied_at
+            FROM corporate_actions
+            ORDER BY effective_date DESC, id DESC
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+def _parse_stock_split_form(form):
+    values = {
+        'symbol': form.get('symbol', '').strip().upper(),
+        'currency': form.get('currency', '').strip().upper() or 'JPY',
+        'effective_date': form.get('effective_date', '').strip(),
+        'ratio': None,
+        'price_override': None,
+        'notes': form.get('notes', '').strip(),
+    }
+    errors = []
+    if not values['symbol']:
+        errors.append('Symbol is required.')
+    if values['currency'] not in ['JPY', 'USD']:
+        errors.append('Currency must be JPY or USD.')
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', values['effective_date']):
+        errors.append('Effective date must be YYYY-MM-DD.')
+    try:
+        values['ratio'] = float(form.get('ratio', ''))
+        if values['ratio'] <= 0:
+            errors.append('Split multiplier must be greater than zero.')
+    except ValueError:
+        errors.append('Split multiplier is required.')
+    try:
+        values['price_override'] = _parse_optional_float_field(form, 'price_override')
+        if values['price_override'] is not None and values['price_override'] < 0:
+            errors.append('Manual price override must be zero or greater.')
+    except ValueError:
+        errors.append('Manual price override must be numeric or blank.')
+    return values, errors
+
+def _preview_stock_split(values):
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT id, trade_date, trade_type, broker, account_name, tax_status,
+                   quantity, price, currency
+            FROM trades
+            WHERE symbol = ? AND currency = ? AND trade_date < ?
+            ORDER BY trade_date ASC, id ASC
+            """,
+            (values['symbol'], values['currency'], values['effective_date'])
+        ).fetchall()
+
+    ratio = values['ratio']
+    return [
+        {
+            **dict(row),
+            'new_quantity': row['quantity'] * ratio,
+            'new_price': row['price'] / ratio,
+        }
+        for row in rows
+    ]
+
+def _stock_split_already_applied(values):
+    with sqlite3.connect(DATABASE) as conn:
+        row = conn.execute(
+            """
+            SELECT id FROM corporate_actions
+            WHERE action_type = 'stock_split'
+              AND symbol = ?
+              AND currency = ?
+              AND effective_date = ?
+              AND ratio = ?
+            """,
+            (values['symbol'], values['currency'], values['effective_date'], values['ratio'])
+        ).fetchone()
+    return row is not None
+
+def _apply_stock_split(values):
+    preview_rows = _preview_stock_split(values)
+    if not preview_rows:
+        raise ValueError('No matching pre-effective-date stock trades were found.')
+    if _stock_split_already_applied(values):
+        raise ValueError('This stock split has already been recorded.')
+
+    applied_at = _portfolio_now().strftime('%Y-%m-%d %H:%M:%S')
+    with sqlite3.connect(DATABASE) as conn:
+        for row in preview_rows:
+            conn.execute(
+                """
+                UPDATE trades
+                SET quantity = ?, price = ?
+                WHERE id = ?
+                """,
+                (row['new_quantity'], row['new_price'], row['id'])
+            )
+        if values['price_override'] is not None:
+            conn.execute(
+                """
+                INSERT INTO market_price_overrides (
+                    symbol, currency, instrument_type, current_price, change_today,
+                    latest_data_at, notes, updated_at
+                )
+                VALUES (?, ?, 'stock', ?, 0, ?, ?, ?)
+                ON CONFLICT(symbol, currency, instrument_type) DO UPDATE SET
+                    current_price = excluded.current_price,
+                    change_today = excluded.change_today,
+                    latest_data_at = excluded.latest_data_at,
+                    notes = excluded.notes,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    values['symbol'],
+                    values['currency'],
+                    values['price_override'],
+                    values['effective_date'],
+                    values['notes'] or 'Corporate action split override',
+                    applied_at
+                )
+            )
+        conn.execute(
+            """
+            INSERT INTO corporate_actions (
+                symbol, currency, action_type, effective_date, ratio,
+                affected_trades, price_override, notes, applied_at
+            )
+            VALUES (?, ?, 'stock_split', ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                values['symbol'],
+                values['currency'],
+                values['effective_date'],
+                values['ratio'],
+                len(preview_rows),
+                values['price_override'],
+                values['notes'],
+                applied_at
+            )
+        )
+    cache.clear()
+    return len(preview_rows)
+
+def _fetch_portfolio_history_rows(limit=90):
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT date, value_usd, value_jpy, unrealized_pnl_usd, unrealized_pnl_jpy
+            FROM portfolio_history
+            ORDER BY date DESC
+            LIMIT ?
+            """,
+            (limit,)
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+def _parse_optional_float_field(form, name):
+    value = form.get(name, '').strip()
+    if value == '':
+        return None
+    return float(value)
+
+def _recalculate_today_history_snapshot():
+    exchange_data = get_exchange_rate()
+    if exchange_data is None:
+        raise RuntimeError('USD/JPY market data is unavailable.')
+
+    trades = _fetch_normalized_trades()
+    summary = _calculate_portfolio_summary(trades, exchange_data['rate'])
+    if not summary['market_data_complete']:
+        raise RuntimeError('One or more live quotes are unavailable.')
+
+    _ensure_history_updated(summary)
+    return summary
 
 def _get_available_tax_years():
     with sqlite3.connect(DATABASE) as conn:
@@ -2192,6 +2451,33 @@ def init_db():
             [(key, str(value)) for key, value in APP_SETTING_DEFAULTS.items()]
         )
         conn.execute('''
+            CREATE TABLE IF NOT EXISTS market_price_overrides (
+                symbol TEXT NOT NULL,
+                currency TEXT NOT NULL,
+                instrument_type TEXT NOT NULL DEFAULT 'stock',
+                current_price REAL NOT NULL,
+                change_today REAL,
+                latest_data_at TEXT,
+                notes TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (symbol, currency, instrument_type)
+            )
+        ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS corporate_actions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                currency TEXT NOT NULL,
+                action_type TEXT NOT NULL,
+                effective_date TEXT NOT NULL,
+                ratio REAL NOT NULL,
+                affected_trades INTEGER NOT NULL DEFAULT 0,
+                price_override REAL,
+                notes TEXT,
+                applied_at TEXT NOT NULL
+            )
+        ''')
+        conn.execute('''
             CREATE TABLE IF NOT EXISTS watchlist (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT NOT NULL,
@@ -2411,9 +2697,9 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
             holdings[key]['total_cost_jpy'] -= cost_of_shares_sold_jpy
 
     # --- Combine display rows ---
-    # Keep the broker-level accounting above, then combine open holdings for display.
-    # This avoids fetching and showing duplicate rows for the same ticker while preserving
-    # each broker's own sale history and cost basis.
+    # Keep the broker-level accounting above, then combine holdings for display.
+    # Closed broker/account buckets still contribute their trade history when the
+    # same ticker remains open elsewhere.
     combined_holdings = {}
     summary_list = []
     total_realized_pnl_usd = 0.0
@@ -2438,19 +2724,16 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
         if exchange_rate > 0:
             total_realized_pnl_usd += data['realized_pnl_jpy'] / exchange_rate
 
-        if data['quantity'] <= 0.00001: # Use a small epsilon for float comparison
-            continue # Skip display and market-data lookup for fully sold-off stocks
-
         combined_key = (data['symbol'], data['currency'], data['instrument_type'])
         if combined_key not in combined_holdings:
             combined_holdings[combined_key] = {
                 'symbol': data['symbol'],
-                'broker': data['broker'],
-                'brokers': [data['broker']],
-                'account_name': data['account_name'],
-                'account_names': [data['account_name']],
-                'tax_status': data['tax_status'],
-                'tax_statuses': [data['tax_status']],
+                'broker': '',
+                'brokers': [],
+                'account_name': '',
+                'account_names': [],
+                'tax_status': '',
+                'tax_statuses': [],
                 'instrument_type': data['instrument_type'],
                 'name': data['name'],
                 'currency': data['currency'],
@@ -2461,7 +2744,12 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
                 'today_buy_cost': 0,
                 'trade_history': [],
             }
-        elif data['broker'] not in combined_holdings[combined_key]['brokers']:
+        combined_holdings[combined_key]['trade_history'].extend(data['trade_history'])
+
+        if data['quantity'] <= 0.00001:
+            continue
+
+        if data['broker'] not in combined_holdings[combined_key]['brokers']:
             combined_holdings[combined_key]['brokers'].append(data['broker'])
         if data['account_name'] not in combined_holdings[combined_key]['account_names']:
             combined_holdings[combined_key]['account_names'].append(data['account_name'])
@@ -2473,7 +2761,6 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
         combined_holdings[combined_key]['total_cost_jpy'] += data['total_cost_jpy']
         combined_holdings[combined_key]['today_buy_quantity'] += data['today_buy_quantity']
         combined_holdings[combined_key]['today_buy_cost'] += data['today_buy_cost']
-        combined_holdings[combined_key]['trade_history'].extend(data['trade_history'])
 
     # --- Enrichment and Summary ---
     total_portfolio_value_usd = 0.0
@@ -2486,6 +2773,9 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
     market_data_timestamps = []
 
     for data in combined_holdings.values():
+        if data['quantity'] <= 0.00001:
+            continue
+
         data['broker'] = ', '.join(data['brokers'])
         data['account_name'] = ', '.join(data['account_names'])
         data['tax_status'] = ', '.join(data['tax_statuses'])
@@ -3862,6 +4152,207 @@ def tax_report():
         brokers=config_options['broker'],
         account_names=config_options['account_name'],
         tax_statuses=config_options['tax_status']
+    )
+
+@app.route('/corporate_actions', methods=['GET', 'POST'])
+def corporate_actions():
+    preview_rows = None
+    values = {
+        'symbol': '',
+        'currency': 'JPY',
+        'effective_date': _portfolio_day_str(),
+        'ratio': '',
+        'price_override': '',
+        'notes': '',
+    }
+
+    if request.method == 'POST':
+        _validate_csrf_token()
+        action = request.form.get('action')
+        parsed_values, errors = _parse_stock_split_form(request.form)
+        values.update({
+            'symbol': parsed_values['symbol'],
+            'currency': parsed_values['currency'],
+            'effective_date': parsed_values['effective_date'],
+            'ratio': parsed_values['ratio'] if parsed_values['ratio'] is not None else '',
+            'price_override': parsed_values['price_override'] if parsed_values['price_override'] is not None else '',
+            'notes': parsed_values['notes'],
+        })
+
+        if errors:
+            for error in errors:
+                flash(error, 'danger')
+        elif action == 'preview_stock_split':
+            if _stock_split_already_applied(parsed_values):
+                flash('This stock split has already been recorded.', 'warning')
+            preview_rows = _preview_stock_split(parsed_values)
+            if not preview_rows:
+                flash('No matching pre-effective-date stock trades found.', 'warning')
+        elif action == 'apply_stock_split':
+            if request.form.get('confirm') != 'yes':
+                flash('Review the preview and tick the confirmation box before applying.', 'danger')
+                preview_rows = _preview_stock_split(parsed_values)
+            else:
+                try:
+                    affected_count = _apply_stock_split(parsed_values)
+                    flash(
+                        f"Applied {parsed_values['ratio']:g}-for-1 split to {affected_count} {parsed_values['symbol']} trades.",
+                        'success'
+                    )
+                    values = {
+                        'symbol': '',
+                        'currency': 'JPY',
+                        'effective_date': _portfolio_day_str(),
+                        'ratio': '',
+                        'price_override': '',
+                        'notes': '',
+                    }
+                except ValueError as error:
+                    flash(str(error), 'danger')
+                    preview_rows = _preview_stock_split(parsed_values)
+        else:
+            flash('Unknown corporate action.', 'danger')
+
+    return render_template(
+        'corporate_actions.html',
+        values=values,
+        preview_rows=preview_rows,
+        actions=_fetch_corporate_actions(),
+        current_date=_portfolio_day_str()
+    )
+
+@app.route('/data_maintenance', methods=['GET', 'POST'])
+def data_maintenance():
+    """Maintains cached market data and portfolio history snapshots."""
+    if request.method == 'POST':
+        _validate_csrf_token()
+        action = request.form.get('action')
+
+        if action == 'clear_market_cache':
+            cache.clear()
+            flash('Market data cache cleared.', 'info')
+
+        elif action == 'recalculate_today_history':
+            cache.clear()
+            try:
+                summary = _recalculate_today_history_snapshot()
+                flash(
+                    f"Today's portfolio history snapshot recalculated: ¥{summary['total_value_jpy']:,.0f}.",
+                    'success'
+                )
+            except RuntimeError as error:
+                flash(str(error), 'danger')
+
+        elif action == 'update_history':
+            date_value = request.form.get('date', '').strip()
+            if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', date_value):
+                flash('History date must be YYYY-MM-DD.', 'danger')
+            else:
+                try:
+                    values = {
+                        'value_usd': _parse_optional_float_field(request.form, 'value_usd'),
+                        'value_jpy': _parse_optional_float_field(request.form, 'value_jpy'),
+                        'unrealized_pnl_usd': _parse_optional_float_field(request.form, 'unrealized_pnl_usd'),
+                        'unrealized_pnl_jpy': _parse_optional_float_field(request.form, 'unrealized_pnl_jpy'),
+                    }
+                except ValueError:
+                    flash('History values must be numeric or blank.', 'danger')
+                else:
+                    with sqlite3.connect(DATABASE) as conn:
+                        cursor = conn.execute(
+                            """
+                            UPDATE portfolio_history
+                            SET value_usd = ?, value_jpy = ?, unrealized_pnl_usd = ?, unrealized_pnl_jpy = ?
+                            WHERE date = ?
+                            """,
+                            (
+                                values['value_usd'],
+                                values['value_jpy'],
+                                values['unrealized_pnl_usd'],
+                                values['unrealized_pnl_jpy'],
+                                date_value
+                            )
+                        )
+                    if cursor.rowcount:
+                        flash(f'Portfolio history for {date_value} updated.', 'success')
+                    else:
+                        flash(f'No portfolio history row found for {date_value}.', 'warning')
+
+        elif action == 'delete_history':
+            date_value = request.form.get('date', '').strip()
+            if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', date_value):
+                flash('History date must be YYYY-MM-DD.', 'danger')
+            else:
+                with sqlite3.connect(DATABASE) as conn:
+                    cursor = conn.execute('DELETE FROM portfolio_history WHERE date = ?', (date_value,))
+                if cursor.rowcount:
+                    flash(f'Portfolio history for {date_value} deleted.', 'success')
+                else:
+                    flash(f'No portfolio history row found for {date_value}.', 'warning')
+
+        elif action == 'save_price_override':
+            values, errors = _parse_price_override_form(request.form)
+            if errors:
+                for error in errors:
+                    flash(error, 'danger')
+            else:
+                with sqlite3.connect(DATABASE) as conn:
+                    conn.execute(
+                        """
+                        INSERT INTO market_price_overrides (
+                            symbol, currency, instrument_type, current_price, change_today,
+                            latest_data_at, notes, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(symbol, currency, instrument_type) DO UPDATE SET
+                            current_price = excluded.current_price,
+                            change_today = excluded.change_today,
+                            latest_data_at = excluded.latest_data_at,
+                            notes = excluded.notes,
+                            updated_at = excluded.updated_at
+                        """,
+                        (
+                            values['symbol'],
+                            values['currency'],
+                            values['instrument_type'],
+                            values['current_price'],
+                            values['change_today'],
+                            values['latest_data_at'],
+                            values['notes'],
+                            _portfolio_now().strftime('%Y-%m-%d %H:%M:%S')
+                        )
+                    )
+                cache.clear()
+                flash(f"Manual price override saved for {values['symbol']}.", 'success')
+
+        elif action == 'delete_price_override':
+            symbol = request.form.get('symbol', '').strip().upper()
+            currency = request.form.get('currency', '').strip().upper()
+            instrument_type = request.form.get('instrument_type', 'stock').strip() or 'stock'
+            with sqlite3.connect(DATABASE) as conn:
+                cursor = conn.execute(
+                    """
+                    DELETE FROM market_price_overrides
+                    WHERE symbol = ? AND currency = ? AND instrument_type = ?
+                    """,
+                    (symbol, currency, instrument_type)
+                )
+            cache.clear()
+            if cursor.rowcount:
+                flash(f'Manual price override removed for {symbol}.', 'success')
+            else:
+                flash(f'No manual price override found for {symbol}.', 'warning')
+
+        else:
+            flash('Unknown maintenance action.', 'danger')
+
+        return redirect(url_for('data_maintenance'))
+
+    return render_template(
+        'data_maintenance.html',
+        current_date=_portfolio_day_str(),
+        price_overrides=_fetch_market_price_overrides(),
+        history_rows=_fetch_portfolio_history_rows()
     )
 
 
