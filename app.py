@@ -13,6 +13,10 @@ import secrets
 import urllib.request
 from flask_caching import Cache
 from dotenv import load_dotenv
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    BeautifulSoup = None
 
 # Load environment variables from .env file, making them available to os.environ
 load_dotenv()
@@ -1501,19 +1505,44 @@ def _apply_stock_split(values):
     cache.clear()
     return len(preview_rows)
 
-def _fetch_portfolio_history_rows(limit=90):
+def _fetch_portfolio_history_rows(limit=None):
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        if limit is None:
+            rows = conn.execute(
+                """
+                SELECT date, value_usd, value_jpy, unrealized_pnl_usd, unrealized_pnl_jpy
+                FROM portfolio_history
+                ORDER BY date DESC
+                """
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT date, value_usd, value_jpy, unrealized_pnl_usd, unrealized_pnl_jpy
+                FROM portfolio_history
+                ORDER BY date DESC
+                LIMIT ?
+                """,
+                (limit,)
+            ).fetchall()
+    return [dict(row) for row in rows]
+
+def _fetch_cached_fx_rates(limit=100):
+    """Fetch recently cached FX rates from database."""
     with sqlite3.connect(DATABASE) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
-            SELECT date, value_usd, value_jpy, unrealized_pnl_usd, unrealized_pnl_jpy
-            FROM portfolio_history
+            SELECT date, tts, ttm, ttb, fetched_at
+            FROM fx_rates
             ORDER BY date DESC
             LIMIT ?
             """,
             (limit,)
         ).fetchall()
     return [dict(row) for row in rows]
+
 
 def _parse_optional_float_field(form, name):
     value = form.get(name, '').strip()
@@ -2564,6 +2593,15 @@ def init_db():
                 )
             )
         conn.execute('''
+            CREATE TABLE IF NOT EXISTS fx_rates (
+                date TEXT PRIMARY KEY,
+                tts REAL NOT NULL,
+                ttm REAL,
+                ttb REAL NOT NULL,
+                fetched_at TEXT NOT NULL
+            )
+        ''')
+        conn.execute('''
             CREATE TABLE IF NOT EXISTS config_options (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 category TEXT NOT NULL,
@@ -3091,6 +3129,308 @@ def _calculate_portfolio_performance(current_summary, trades, exchange_rate):
             performance.append(build_entry(key, label, current_total_pnl_jpy, current_value_jpy, note='no P&L history yet'))
 
     return performance
+
+
+# FX Rate Fetching Function
+def _fetch_jpy_usd_rate(trade_date_str):
+    """
+    Fetch JPY/USD exchange rate from cache or MURC website.
+    Stores rates in database for future use.
+    Returns dict with 'tts', 'ttm', 'ttb' values, or error message.
+    """
+    try:
+        # Check database cache first
+        with sqlite3.connect(DATABASE) as conn:
+            row = conn.execute('SELECT tts, ttm, ttb FROM fx_rates WHERE date = ?', (trade_date_str,)).fetchone()
+            if row:
+                return {'tts': row[0], 'ttm': row[1], 'ttb': row[2], 'date': trade_date_str, 'cached': True}
+    except Exception:
+        pass
+    
+    # Not in cache, fetch from website
+    if not BeautifulSoup:
+        return {'error': 'BeautifulSoup not installed'}
+    
+    try:
+        # Parse trade date to YYMMDD format
+        trade_date = datetime.strptime(trade_date_str, '%Y-%m-%d')
+        date_param = trade_date.strftime('%y%m%d')
+        
+        # Construct URL
+        url = f'https://www.murc-kawasesouba.jp/fx/past/index.php?id={date_param}'
+        
+        # Fetch page with timeout
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        req = urllib.request.Request(url, headers=headers)
+        
+        with urllib.request.urlopen(req, timeout=10) as response:
+            raw = response.read()
+            try:
+                header_charset = response.headers.get_content_charset()
+            except Exception:
+                header_charset = None
+
+        # Attempt sensible decodings for Japanese websites: try utf-8, header charset,
+        # then common Japanese encodings (shift_jis / cp932 / euc_jp / iso-2022-jp).
+        html_content = None
+        try:
+            html_content = raw.decode('utf-8')
+        except UnicodeDecodeError:
+            # try charset from headers first
+            if header_charset:
+                try:
+                    html_content = raw.decode(header_charset)
+                except Exception:
+                    html_content = None
+
+            if html_content is None:
+                for enc in ('shift_jis', 'cp932', 'euc_jp', 'iso-2022-jp'):
+                    try:
+                        html_content = raw.decode(enc)
+                        break
+                    except Exception:
+                        html_content = None
+
+            # last resort: replace invalid bytes so parsing can continue
+            if html_content is None:
+                html_content = raw.decode('utf-8', errors='replace')
+
+        soup = BeautifulSoup(html_content, 'html.parser')
+
+        # Look for a table that contains TTS/TTB headers (MURC uses a table per-date).
+        tts = None
+        ttm = None
+        ttb = None
+
+        # Prefer the specific table structure used on MURC (class/data-table7)
+        tables = soup.find_all('table')
+        for table in tables:
+            # collect header texts
+            header_texts = [th.get_text(strip=True) for th in table.find_all('th')]
+            if any(h in ('TTS', 'TTM', 'TTB') for h in header_texts):
+                # iterate body rows and find the row where code is USD
+                for tr in table.find_all('tr'):
+                    cells = tr.find_all(['td', 'th'])
+                    texts = [c.get_text(strip=True) for c in cells]
+                    # find 'USD' in the row (third column in known layout)
+                    if any(t == 'USD' for t in texts):
+                        try:
+                            # Known layout: [Currency, Japanese name, Code, TTS, TTB, *]
+                            # Defensive indexing
+                            if len(texts) >= 5:
+                                raw_tts = texts[3].replace(',', '')
+                                raw_ttb = texts[4].replace(',', '')
+                                tts = float(raw_tts) if raw_tts not in ('', '-') else None
+                                ttb = float(raw_ttb) if raw_ttb not in ('', '-') else None
+                        except Exception:
+                            pass
+                        # try to extract mid-rate (TTM) from header row if present
+                        # or leave as None
+                        break
+                if tts is not None or ttb is not None:
+                    break
+
+        # Fallback: older parsing heuristics (search nearby cells for labels)
+        if tts is None and ttb is None:
+            for cell in soup.find_all(['td', 'th']):
+                text = cell.get_text(strip=True)
+                # look for numeric patterns directly following labels
+                if 'USD' in text and (tts is None or ttb is None):
+                    parent = cell.parent
+                    if parent:
+                        cells = parent.find_all(['td', 'th'])
+                        # try to locate USD and read numeric columns
+                        texts = [c.get_text(strip=True) for c in cells]
+                        for i, tt in enumerate(texts):
+                            if tt == 'USD':
+                                try:
+                                    if i + 1 < len(texts):
+                                        # next columns likely TTS and TTB depending on layout
+                                        if tts is None and i + 2 < len(texts):
+                                            raw_tts = texts[i+1].replace(',', '')
+                                            tts = float(raw_tts)
+                                        if ttb is None and i + 3 < len(texts):
+                                            raw_ttb = texts[i+2].replace(',', '')
+                                            ttb = float(raw_ttb)
+                                except Exception:
+                                    pass
+                                break
+        
+        if tts and ttb:
+            # Store in database cache
+            try:
+                with sqlite3.connect(DATABASE) as conn:
+                    conn.execute(
+                        'INSERT OR REPLACE INTO fx_rates (date, tts, ttm, ttb, fetched_at) VALUES (?, ?, ?, ?, ?)',
+                        (trade_date_str, tts, ttm, ttb, _portfolio_now().strftime('%Y-%m-%d %H:%M:%S'))
+                    )
+            except Exception:
+                pass  # Silently fail on cache store
+            
+            return {'tts': tts, 'ttm': ttm, 'ttb': ttb, 'date': trade_date_str, 'cached': False}
+        else:
+            return {'error': 'Could not find rates on MURC page. Try entering manually.'}
+    
+    except urllib.error.URLError:
+        return {'error': 'Could not fetch rates from MURC website'}
+    except Exception as e:
+        return {'error': f'Error fetching rates: {str(e)[:100]}'}
+
+
+
+@app.route('/api/fx-rate', methods=['POST'])
+def api_fetch_fx_rate():
+    """API endpoint to fetch FX rate for a given date."""
+    _validate_csrf_token()
+    
+    trade_date = request.form.get('trade_date', '')
+    trade_type = request.form.get('trade_type', 'BUY')  # For stocks
+    
+    if not trade_date:
+        return jsonify({'error': 'No trade date provided'}), 400
+    # Prevent fetching rates for the current portfolio date (today) via the UI/API
+    try:
+        if trade_date == _portfolio_day_str():
+            return jsonify({'error': "Fetching today's rates is disabled via the UI. Please enter the rate manually."}), 400
+    except Exception:
+        pass
+
+    result = _fetch_jpy_usd_rate(trade_date)
+    
+    if 'error' in result:
+        return jsonify(result), 400
+    
+    # Determine which rate to use based on trade type
+    if trade_type.upper() == 'SELL':
+        fx_rate = result['ttb']
+        rate_type = 'TTB (Selling)'
+    else:
+        fx_rate = result['tts']
+        rate_type = 'TTS (Buying)'
+    
+    return jsonify({
+        'fx_rate': fx_rate,
+        'rate_type': rate_type,
+        'date': result['date'],
+        'tts': result['tts'],
+        'ttb': result['ttb']
+    })
+
+
+
+def _get_all_stock_trades():
+    """Fetch all stock trades from database for reconciliation."""
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT id, symbol, name, trade_type, quantity, price, currency, trade_date, 
+                   broker, account_name, tax_status, fx_rate, fee_amount, fee_currency
+            FROM trades
+            ORDER BY symbol, trade_date
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+def _get_all_mutual_fund_trades():
+    """Fetch all mutual fund trades from database for reconciliation."""
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT id, fund_code, fund_name, transaction_type, transaction_detail, account_type,
+                   currency, executed_units, nav_per_10000, trade_date, settlement_date,
+                   settlement_amount, broker, account_name, tax_status, fx_rate
+            FROM mutual_fund_trades
+            ORDER BY fund_code, trade_date
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+def _get_all_dividends():
+    """Fetch all dividends from database for reconciliation."""
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT id, symbol, name, payment_date, currency, gross_amount, tax_withheld,
+                   foreign_tax_withheld, japanese_income_tax_withheld, japanese_local_tax_withheld,
+                   deductible_interest, quantity, amount_per_share, source_country, security_type,
+                   tax_treatment, broker, account_name, tax_status, fx_rate, notes
+            FROM dividends
+            ORDER BY symbol, payment_date
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+def _make_trade_key(trade):
+    """Create a hashable key for a stock trade (without ID)."""
+    return (
+        trade.get('symbol'), trade.get('name'), trade.get('trade_type'),
+        trade.get('quantity'), trade.get('price'), trade.get('currency'),
+        trade.get('trade_date'), trade.get('broker'), trade.get('account_name'),
+        trade.get('tax_status'), trade.get('fx_rate'), trade.get('fee_amount'),
+        trade.get('fee_currency')
+    )
+
+def _make_fund_key(trade):
+    """Create a hashable key for a mutual fund trade (without ID)."""
+    return (
+        trade.get('fund_code'), trade.get('fund_name'), trade.get('transaction_type'),
+        trade.get('transaction_detail'), trade.get('account_type'), trade.get('currency'),
+        trade.get('executed_units'), trade.get('nav_per_10000'), trade.get('trade_date'),
+        trade.get('settlement_date'), trade.get('settlement_amount'), trade.get('broker'),
+        trade.get('account_name'), trade.get('tax_status'), trade.get('fx_rate')
+    )
+
+def _make_dividend_key(dividend):
+    """Create a hashable key for a dividend (without ID)."""
+    return (
+        dividend.get('symbol'), dividend.get('name'), dividend.get('payment_date'),
+        dividend.get('currency'), dividend.get('gross_amount'), dividend.get('tax_withheld'),
+        dividend.get('foreign_tax_withheld'), dividend.get('japanese_income_tax_withheld'),
+        dividend.get('japanese_local_tax_withheld'), dividend.get('quantity'),
+        dividend.get('amount_per_share'), dividend.get('source_country'),
+        dividend.get('security_type'), dividend.get('tax_treatment'),
+        dividend.get('broker'), dividend.get('account_name'), dividend.get('tax_status'),
+        dividend.get('fx_rate')
+    )
+
+def _reconcile_records(broker_records, db_records, key_func):
+    """
+    Compare broker records against database records.
+    Returns a dict with: matched, missing_in_db, extra_in_db, mismatched.
+    """
+    broker_keyset = {key_func(r): r for r in broker_records}
+    db_keyset = {key_func(r): r for r in db_records}
+    
+    matched = []
+    missing_in_db = []
+    extra_in_db = []
+    
+    # Check broker records against DB
+    for key, broker_record in broker_keyset.items():
+        if key in db_keyset:
+            matched.append({'broker': broker_record, 'db': db_keyset[key]})
+        else:
+            missing_in_db.append(broker_record)
+    
+    # Check DB records against broker
+    for key, db_record in db_keyset.items():
+        if key not in broker_keyset:
+            extra_in_db.append(db_record)
+    
+    return {
+        'matched': matched,
+        'missing_in_db': missing_in_db,
+        'extra_in_db': extra_in_db,
+        'matched_count': len(matched),
+        'missing_count': len(missing_in_db),
+        'extra_count': len(extra_in_db),
+    }
+
 
 @app.route('/')
 def index():
@@ -4352,7 +4692,8 @@ def data_maintenance():
         'data_maintenance.html',
         current_date=_portfolio_day_str(),
         price_overrides=_fetch_market_price_overrides(),
-        history_rows=_fetch_portfolio_history_rows()
+        history_rows=_fetch_portfolio_history_rows(limit=None),
+        fx_rates=_fetch_cached_fx_rates()
     )
 
 
@@ -4981,6 +5322,168 @@ def bulk_upload():
             return redirect(request.url)
 
     return render_template('bulk_upload.html', profiles=profiles)
+
+@app.route('/reconciliation', methods=['GET', 'POST'])
+def reconciliation():
+    """Reconciliation tool to compare broker files against database records."""
+    profiles = _fetch_import_profiles()
+    reconciliation_results = None
+    selected_profile = None
+    
+    if request.method == 'POST':
+        _validate_csrf_token()
+        if 'file' not in request.files:
+            flash('No file part in the request.', 'danger')
+            return redirect(request.url)
+        
+        file = request.files['file']
+        if file.filename == '':
+            flash('No file selected for uploading.', 'danger')
+            return redirect(request.url)
+        
+        profile_id = request.form.get('profile_id')
+        if not profile_id or not profile_id.isdigit():
+            flash('Please select an import profile.', 'danger')
+            return redirect(request.url)
+        
+        selected_profile = _fetch_import_profile(int(profile_id))
+        if not selected_profile:
+            flash('Selected import profile not found.', 'danger')
+            return redirect(request.url)
+        
+        if not file.filename.endswith('.csv'):
+            flash('Please upload a CSV file.', 'warning')
+            return redirect(request.url)
+        
+        try:
+            # Parse broker file using the selected profile
+            broker_records = []
+            rows = _read_csv_rows_for_import(file, selected_profile)
+            for index, row in enumerate(rows, start=int(selected_profile.get('header_row') or 1) + 1):
+                if not _row_matches_import_profile(row, selected_profile):
+                    continue
+                values = _map_import_row(row, selected_profile)
+                payload = _json_to_form_payload(values)
+                
+                try:
+                    if selected_profile['instrument_type'] == 'stock':
+                        parsed, row_errors = _parse_trade_form(payload)
+                        if not row_errors:
+                            broker_records.append(parsed)
+                    elif selected_profile['instrument_type'] == 'mutual_fund':
+                        parsed, row_errors = _parse_mutual_fund_trade_form(payload)
+                        if not row_errors:
+                            broker_records.append(parsed)
+                    elif selected_profile['instrument_type'] == 'dividend':
+                        parsed, row_errors = _parse_dividend_form(payload)
+                        if not row_errors:
+                            broker_records.append(parsed)
+                except Exception as e:
+                    flash(f"Row {index}: {e}", 'warning')
+            
+            if not broker_records:
+                flash('No valid records found in broker file.', 'warning')
+                return redirect(request.url)
+            
+            # Fetch database records
+            if selected_profile['instrument_type'] == 'stock':
+                db_records = _get_all_stock_trades()
+                key_func = _make_trade_key
+            elif selected_profile['instrument_type'] == 'mutual_fund':
+                db_records = _get_all_mutual_fund_trades()
+                key_func = _make_fund_key
+            elif selected_profile['instrument_type'] == 'dividend':
+                db_records = _get_all_dividends()
+                key_func = _make_dividend_key
+            else:
+                flash('Unknown instrument type.', 'danger')
+                return redirect(request.url)
+            
+            # Perform reconciliation
+            reconciliation_results = _reconcile_records(broker_records, db_records, key_func)
+            reconciliation_results['instrument_type'] = selected_profile['instrument_type']
+            reconciliation_results['profile_name'] = selected_profile['name']
+            
+            flash(
+                f"Reconciliation complete: {reconciliation_results['matched_count']} matched, "
+                f"{reconciliation_results['missing_count']} missing from DB, "
+                f"{reconciliation_results['extra_count']} extra in DB.",
+                'info'
+            )
+        
+        except Exception as e:
+            flash(f'Reconciliation error: {str(e)}', 'danger')
+            return redirect(request.url)
+    
+    return render_template(
+        'reconciliation.html',
+        profiles=profiles,
+        reconciliation_results=reconciliation_results,
+        selected_profile=selected_profile
+    )
+
+@app.route('/reconciliation/add-missing', methods=['POST'])
+def reconciliation_add_missing():
+    """Add a missing record from broker file to database."""
+    _validate_csrf_token()
+    
+    record_json = request.form.get('record_json', '{}')
+    instrument_type = request.form.get('instrument_type', '')
+    
+    try:
+        record = json.loads(record_json)
+        
+        if instrument_type == 'stock':
+            _insert_stock_trade(record)
+            flash(f"Added stock trade: {record.get('symbol')} ({record.get('quantity')} @ {record.get('price')})", 'success')
+        elif instrument_type == 'mutual_fund':
+            _insert_mutual_fund_trade(record)
+            flash(f"Added mutual fund: {record.get('fund_code')} ({record.get('executed_units')} units)", 'success')
+        elif instrument_type == 'dividend':
+            _insert_dividend(record)
+            flash(f"Added dividend: {record.get('symbol')} (¥{record.get('gross_amount')})", 'success')
+        else:
+            flash('Unknown instrument type.', 'danger')
+    
+    except Exception as e:
+        flash(f'Error adding record: {str(e)}', 'danger')
+    
+    return redirect(url_for('reconciliation'))
+
+@app.route('/reconciliation/delete-extra', methods=['POST'])
+def reconciliation_delete_extra():
+    """Delete an extra record from database."""
+    _validate_csrf_token()
+    
+    record_id = request.form.get('record_id')
+    instrument_type = request.form.get('instrument_type', '')
+    
+    if not record_id or not record_id.isdigit():
+        flash('Invalid record ID.', 'danger')
+        return redirect(url_for('reconciliation'))
+    
+    try:
+        with sqlite3.connect(DATABASE) as conn:
+            if instrument_type == 'stock':
+                cursor = conn.execute('DELETE FROM trades WHERE id = ?', (int(record_id),))
+                flash('Stock trade deleted.', 'success')
+            elif instrument_type == 'mutual_fund':
+                cursor = conn.execute('DELETE FROM mutual_fund_trades WHERE id = ?', (int(record_id),))
+                flash('Mutual fund trade deleted.', 'success')
+            elif instrument_type == 'dividend':
+                cursor = conn.execute('DELETE FROM dividends WHERE id = ?', (int(record_id),))
+                flash('Dividend record deleted.', 'success')
+            else:
+                flash('Unknown instrument type.', 'danger')
+                return redirect(url_for('reconciliation'))
+            
+            if not cursor.rowcount:
+                flash('Record not found.', 'warning')
+    
+    except Exception as e:
+        flash(f'Error deleting record: {str(e)}', 'danger')
+    
+    return redirect(url_for('reconciliation'))
 
 # Initialize database on startup.
 # This ensures the necessary tables exist before the app starts.

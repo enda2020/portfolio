@@ -78,8 +78,11 @@
                     </div>
                     <div class="mb-3">
                         <label for="fx_rate" class="form-label">FX Rate (TTS/TTB)</label>
-                        <input type="number" step="any" class="form-control" id="fx_rate" name="fx_rate" value="{{ values.fx_rate or '' }}">
-                        <div class="form-text">For US stocks, enter the TTS rate for BUYS or TTB rate for SELLS on the trade date. Leave blank for JPY stocks.</div>
+                        <div class="input-group">
+                            <input type="number" step="any" class="form-control" id="fx_rate" name="fx_rate" value="{{ values.fx_rate or '' }}">
+                            <button class="btn btn-outline-info" type="button" id="fetch_fx_btn" onclick="fetchFXRate()">Auto-Fetch</button>
+                        </div>
+                        <div class="form-text">For US stocks, enter the TTS rate for BUYS or TTB rate for SELLS on the trade date. Leave blank for JPY stocks. Click "Auto-Fetch" to get the rate from MURC.</div>
                     </div>
                     <div class="row">
                         <div class="col-md-6 mb-3">
@@ -103,4 +106,48 @@
         </div>
     </div>
 </div>
+
+<script>
+function fetchFXRate() {
+    const tradeDate = document.getElementById('trade_date').value;
+    const tradeType = document.querySelector('input[name="trade_type"]:checked').value;
+    const fxRateInput = document.getElementById('fx_rate');
+    const btn = document.getElementById('fetch_fx_btn');
+    
+    if (!tradeDate) {
+        alert('Please select a trade date first');
+        return;
+    }
+    
+    btn.disabled = true;
+    btn.textContent = 'Fetching...';
+    
+    const formData = new FormData();
+    formData.append('trade_date', tradeDate);
+    formData.append('trade_type', tradeType);
+    formData.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
+    
+    fetch('{{ url_for("api_fetch_fx_rate") }}', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            alert('Error: ' + data.error);
+        } else {
+            fxRateInput.value = data.fx_rate.toFixed(4);
+            alert(`Fetched ${data.rate_type}: ${data.fx_rate.toFixed(4)}\n\nTTS: ${data.tts.toFixed(4)}\nTTB: ${data.ttb.toFixed(4)}`);
+        }
+    })
+    .catch(error => {
+        alert('Failed to fetch rate: ' + error);
+    })
+    .finally(() => {
+        btn.disabled = false;
+        btn.textContent = 'Auto-Fetch';
+    });
+}
+</script>
 {% endblock %}
+

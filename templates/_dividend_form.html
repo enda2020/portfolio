@@ -109,8 +109,11 @@
 </div>
 <div class="mb-3">
     <label for="fx_rate" class="form-label">FX Rate</label>
-    <input type="number" step="any" class="form-control" id="fx_rate" name="fx_rate" value="{{ values.fx_rate or '' }}">
-    <div class="form-text">For USD dividends, enter the payment-date USD/JPY rate to calculate JPY totals.</div>
+    <div class="input-group">
+        <input type="number" step="any" class="form-control" id="fx_rate" name="fx_rate" value="{{ values.fx_rate or '' }}">
+        <button class="btn btn-outline-info" type="button" id="fetch_fx_btn" onclick="fetchFXRateDividend()">Auto-Fetch</button>
+    </div>
+    <div class="form-text">For USD dividends, enter the payment-date USD/JPY rate to calculate JPY totals. Click "Auto-Fetch" to get the rate from MURC (uses TTS).</div>
 </div>
 <div class="mb-3">
     <label for="notes" class="form-label">Notes</label>

@@ -20,4 +20,47 @@
         </div>
     </div>
 </div>
+
+<script>
+function fetchFXRateDividend() {
+    const paymentDate = document.getElementById('payment_date').value;
+    const fxRateInput = document.getElementById('fx_rate');
+    const btn = document.getElementById('fetch_fx_btn');
+    
+    if (!paymentDate) {
+        alert('Please select a payment date first');
+        return;
+    }
+    
+    btn.disabled = true;
+    btn.textContent = 'Fetching...';
+    
+    const formData = new FormData();
+    formData.append('trade_date', paymentDate);
+    formData.append('trade_type', 'BUY');  // Always use TTS for dividends
+    formData.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
+    
+    fetch('{{ url_for("api_fetch_fx_rate") }}', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            alert('Error: ' + data.error);
+        } else {
+            fxRateInput.value = data.fx_rate.toFixed(4);
+            alert(`Fetched TTS (for dividends): ${data.fx_rate.toFixed(4)}\n\nNote: For tax purposes, verify this is the correct rate to use.\nTTS: ${data.tts.toFixed(4)}\nTTB: ${data.ttb.toFixed(4)}`);
+        }
+    })
+    .catch(error => {
+        alert('Failed to fetch rate: ' + error);
+    })
+    .finally(() => {
+        btn.disabled = false;
+        btn.textContent = 'Auto-Fetch';
+    });
+}
+</script>
 {% endblock %}
+

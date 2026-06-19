@@ -119,6 +119,9 @@
         <h4>Portfolio History</h4>
     </div>
     <div class="card-body">
+        <div class="alert alert-info mb-4">
+            <strong>Tip:</strong> Use this table to manually correct portfolio values affected by stock splits or other data issues. Edit the values directly in the input fields and click <strong>Save</strong> to persist changes. Each row is editable independently.
+        </div>
         {% if history_rows %}
             <div class="table-responsive">
                 <table class="table table-hover table-dark">
@@ -171,6 +174,43 @@
             <div class="text-center p-5">
                 <h4>No portfolio history rows.</h4>
             </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h4>Cached FX Rates (USD/JPY)</h4>
+    </div>
+    <div class="card-body">
+        <p class="text-muted mb-3">These are cached exchange rates from MURC that have been fetched via the Auto-Fetch feature. They are reused automatically when you fetch the same date again, so you don't need to re-download from the website.</p>
+        {% if fx_rates %}
+            <div class="table-responsive">
+                <table class="table table-sm table-hover table-dark">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>TTS (Buy)</th>
+                            <th>TTM (Mid)</th>
+                            <th>TTB (Sell)</th>
+                            <th>Fetched At</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for rate in fx_rates %}
+                        <tr>
+                            <td><strong>{{ rate.date }}</strong></td>
+                            <td>{{ "{:.4f}".format(rate.tts) if rate.tts else '-' }}</td>
+                            <td>{{ "{:.4f}".format(rate.ttm) if rate.ttm else '-' }}</td>
+                            <td>{{ "{:.4f}".format(rate.ttb) if rate.ttb else '-' }}</td>
+                            <td><small class="text-muted">{{ rate.fetched_at or '' }}</small></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="text-muted">No cached FX rates yet. Use "Auto-Fetch" on the Add Trade or Add Dividend screens to populate this table.</div>
         {% endif %}
     </div>
 </div>

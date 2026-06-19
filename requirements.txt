@@ -3,3 +3,4 @@ Flask-Caching
 yfinance
 gunicorn
 python-dotenv
+beautifulsoup4

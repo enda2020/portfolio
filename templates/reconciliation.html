@@ -1,0 +1,354 @@
+{% extends "base.html" %}
+
+{% block title %}Reconciliation Tool{% endblock %}
+
+{% block container_class %}container-fluid{% endblock %}
+
+{% block content %}
+<div class="page-toolbar d-flex justify-content-between align-items-center mb-4">
+    <h1>Reconciliation Tool</h1>
+    <div class="page-actions">
+        <a href="{{ url_for('bulk_upload') }}" class="btn btn-outline-info">Bulk Upload</a>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">
+        <h4>Compare Broker File vs Database</h4>
+    </div>
+    <div class="card-body">
+        <form method="post" enctype="multipart/form-data">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label for="profileSelect" class="form-label">Import Profile</label>
+                    <select id="profileSelect" class="form-select" name="profile_id" required>
+                        <option value="">-- Select Profile --</option>
+                        {% if profiles %}
+                            {% for profile in profiles %}
+                            <option value="{{ profile.id }}" {% if selected_profile and selected_profile.id == profile.id %}selected{% endif %}>
+                                {{ profile.name }} ({{ profile.instrument_type|replace('_', ' ')|title }})
+                            </option>
+                            {% endfor %}
+                        {% endif %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label for="fileInput" class="form-label">CSV File</label>
+                    <input class="form-control" type="file" id="fileInput" name="file" accept=".csv" required>
+                </div>
+                <div class="col-md-4">
+                    <button type="submit" class="btn btn-primary w-100">Reconcile</button>
+                </div>
+            </div>
+            <small class="text-muted mt-2 d-block">
+                Upload your broker CSV file using the same import profile you use for bulk uploads.
+            </small>
+        </form>
+    </div>
+</div>
+
+{% if reconciliation_results %}
+<div class="card mb-4">
+    <div class="card-header bg-dark">
+        <h4 class="mb-0">
+            Reconciliation Results: {{ reconciliation_results.profile_name }}
+            <small class="text-muted ms-2">({{ reconciliation_results.instrument_type|replace('_', ' ')|title }})</small>
+        </h4>
+    </div>
+    <div class="card-body">
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="alert alert-success mb-0">
+                    <strong>{{ reconciliation_results.matched_count }}</strong> Matched
+                    <small class="d-block text-muted">In both file and DB</small>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="alert alert-warning mb-0">
+                    <strong>{{ reconciliation_results.missing_count }}</strong> Missing in DB
+                    <small class="d-block text-muted">Only in broker file</small>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="alert alert-info mb-0">
+                    <strong>{{ reconciliation_results.extra_count }}</strong> Extra in DB
+                    <small class="d-block text-muted">Only in database</small>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="alert alert-secondary mb-0">
+                    <strong>{{ reconciliation_results.matched_count + reconciliation_results.missing_count + reconciliation_results.extra_count }}</strong> Total
+                    <small class="d-block text-muted">All unique records</small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if reconciliation_results.missing_count > 0 %}
+<div class="card mb-4">
+    <div class="card-header bg-warning">
+        <h5 class="mb-0">Missing in Database ({{ reconciliation_results.missing_count }})</h5>
+    </div>
+    <div class="card-body">
+        <p class="text-muted mb-3">
+            These records appear in your broker file but are not in the database. You can import them using the <a href="{{ url_for('bulk_upload') }}">Bulk Upload</a> feature.
+        </p>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover table-dark">
+                <thead>
+                    <tr>
+                        {% if reconciliation_results.instrument_type == 'stock' %}
+                            <th>Symbol</th>
+                            <th>Type</th>
+                            <th>Qty</th>
+                            <th>Price</th>
+                            <th>Currency</th>
+                            <th>Date</th>
+                            <th>Broker</th>
+                            <th>Account</th>
+                        {% elif reconciliation_results.instrument_type == 'mutual_fund' %}
+                            <th>Fund Code</th>
+                            <th>Fund Name</th>
+                            <th>Type</th>
+                            <th>Units</th>
+                            <th>NAV/10k</th>
+                            <th>Date</th>
+                            <th>Broker</th>
+                            <th>Account</th>
+                        {% elif reconciliation_results.instrument_type == 'dividend' %}
+                            <th>Symbol</th>
+                            <th>Payment Date</th>
+                            <th>Gross Amount</th>
+                            <th>Currency</th>
+                            <th>Broker</th>
+                            <th>Account</th>
+                        {% endif %}
+                        <th class="text-nowrap">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for record in reconciliation_results.missing_in_db %}
+                    <tr>
+                        {% if reconciliation_results.instrument_type == 'stock' %}
+                            <td><strong>{{ record.symbol }}</strong></td>
+                            <td>{{ record.trade_type }}</td>
+                            <td>{{ "{:,.2f}".format(record.quantity or 0) }}</td>
+                            <td>{{ "{:,.2f}".format(record.price or 0) }}</td>
+                            <td>{{ record.currency }}</td>
+                            <td>{{ record.trade_date }}</td>
+                            <td>{{ record.broker or '' }}</td>
+                            <td>{{ record.account_name or '' }}</td>
+                        {% elif reconciliation_results.instrument_type == 'mutual_fund' %}
+                            <td><strong>{{ record.fund_code }}</strong></td>
+                            <td>{{ record.fund_name }}</td>
+                            <td>{{ record.transaction_type }}</td>
+                            <td>{{ "{:,.2f}".format(record.executed_units or 0) }}</td>
+                            <td>{{ "{:,.2f}".format(record.nav_per_10000 or 0) }}</td>
+                            <td>{{ record.trade_date }}</td>
+                            <td>{{ record.broker or '' }}</td>
+                            <td>{{ record.account_name or '' }}</td>
+                        {% elif reconciliation_results.instrument_type == 'dividend' %}
+                            <td><strong>{{ record.symbol }}</strong></td>
+                            <td>{{ record.payment_date }}</td>
+                            <td>{{ "{:,.2f}".format(record.gross_amount or 0) }}</td>
+                            <td>{{ record.currency }}</td>
+                            <td>{{ record.broker or '' }}</td>
+                            <td>{{ record.account_name or '' }}</td>
+                        {% endif %}
+                        <td>
+                            <form method="POST" class="d-inline" action="{{ url_for('reconciliation_add_missing') }}" onsubmit="return confirm('Import this record?')">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <input type="hidden" name="record_json" value="{{ record|tojson }}">
+                                <input type="hidden" name="instrument_type" value="{{ reconciliation_results.instrument_type }}">
+                                <button type="submit" class="btn btn-sm btn-success">Import</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if reconciliation_results.extra_count > 0 %}
+<div class="card mb-4">
+    <div class="card-header bg-info">
+        <h5 class="mb-0">Extra in Database ({{ reconciliation_results.extra_count }})</h5>
+    </div>
+    <div class="card-body">
+        <p class="text-muted mb-3">
+            These records are in your database but do not appear in the broker file. They may have been deleted from your broker account or need verification.
+        </p>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover table-dark">
+                <thead>
+                    <tr>
+                        {% if reconciliation_results.instrument_type == 'stock' %}
+                            <th>Symbol</th>
+                            <th>Type</th>
+                            <th>Qty</th>
+                            <th>Price</th>
+                            <th>Currency</th>
+                            <th>Date</th>
+                            <th>Broker</th>
+                            <th>Account</th>
+                        {% elif reconciliation_results.instrument_type == 'mutual_fund' %}
+                            <th>Fund Code</th>
+                            <th>Fund Name</th>
+                            <th>Type</th>
+                            <th>Units</th>
+                            <th>NAV/10k</th>
+                            <th>Date</th>
+                            <th>Broker</th>
+                            <th>Account</th>
+                        {% elif reconciliation_results.instrument_type == 'dividend' %}
+                            <th>Symbol</th>
+                            <th>Payment Date</th>
+                            <th>Gross Amount</th>
+                            <th>Currency</th>
+                            <th>Broker</th>
+                            <th>Account</th>
+                        {% endif %}
+                        <th class="text-nowrap">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for record in reconciliation_results.extra_in_db %}
+                    <tr>
+                        {% if reconciliation_results.instrument_type == 'stock' %}
+                            <td><strong>{{ record.symbol }}</strong></td>
+                            <td>{{ record.trade_type }}</td>
+                            <td>{{ "{:,.2f}".format(record.quantity or 0) }}</td>
+                            <td>{{ "{:,.2f}".format(record.price or 0) }}</td>
+                            <td>{{ record.currency }}</td>
+                            <td>{{ record.trade_date }}</td>
+                            <td>{{ record.broker or '' }}</td>
+                            <td>{{ record.account_name or '' }}</td>
+                        {% elif reconciliation_results.instrument_type == 'mutual_fund' %}
+                            <td><strong>{{ record.fund_code }}</strong></td>
+                            <td>{{ record.fund_name }}</td>
+                            <td>{{ record.transaction_type }}</td>
+                            <td>{{ "{:,.2f}".format(record.executed_units or 0) }}</td>
+                            <td>{{ "{:,.2f}".format(record.nav_per_10000 or 0) }}</td>
+                            <td>{{ record.trade_date }}</td>
+                            <td>{{ record.broker or '' }}</td>
+                            <td>{{ record.account_name or '' }}</td>
+                        {% elif reconciliation_results.instrument_type == 'dividend' %}
+                            <td><strong>{{ record.symbol }}</strong></td>
+                            <td>{{ record.payment_date }}</td>
+                            <td>{{ "{:,.2f}".format(record.gross_amount or 0) }}</td>
+                            <td>{{ record.currency }}</td>
+                            <td>{{ record.broker or '' }}</td>
+                            <td>{{ record.account_name or '' }}</td>
+                        {% endif %}
+                        <td>
+                            <form method="POST" class="d-inline" action="{{ url_for('reconciliation_delete_extra') }}" onsubmit="return confirm('Delete this record from database?')">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <input type="hidden" name="record_id" value="{{ record.id }}">
+                                <input type="hidden" name="instrument_type" value="{{ reconciliation_results.instrument_type }}">
+                                <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if reconciliation_results.matched_count > 0 %}
+<div class="card">
+    <div class="card-header bg-success">
+        <h5 class="mb-0">
+            Matched Records ({{ reconciliation_results.matched_count }})
+            <small class="ms-2">
+                <a href="#" class="text-white" data-bs-toggle="collapse" data-bs-target="#matchedTable">
+                    {% if reconciliation_results.matched_count > 100 %}
+                        (Showing first 100)
+                    {% endif %}
+                    Show/Hide
+                </a>
+            </small>
+        </h5>
+    </div>
+    <div class="card-body">
+        <p class="text-muted mb-3">These records match between your broker file and database.</p>
+        <div id="matchedTable" class="table-responsive collapse">
+            <table class="table table-sm table-hover table-dark">
+                <thead>
+                    <tr>
+                        {% if reconciliation_results.instrument_type == 'stock' %}
+                            <th>Symbol</th>
+                            <th>Type</th>
+                            <th>Qty</th>
+                            <th>Price</th>
+                            <th>Currency</th>
+                            <th>Date</th>
+                            <th>Broker</th>
+                            <th>Account</th>
+                        {% elif reconciliation_results.instrument_type == 'mutual_fund' %}
+                            <th>Fund Code</th>
+                            <th>Fund Name</th>
+                            <th>Type</th>
+                            <th>Units</th>
+                            <th>NAV/10k</th>
+                            <th>Date</th>
+                            <th>Broker</th>
+                            <th>Account</th>
+                        {% elif reconciliation_results.instrument_type == 'dividend' %}
+                            <th>Symbol</th>
+                            <th>Payment Date</th>
+                            <th>Gross Amount</th>
+                            <th>Currency</th>
+                            <th>Broker</th>
+                            <th>Account</th>
+                        {% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for match in reconciliation_results.matched[:100] %}
+                    <tr>
+                        {% if reconciliation_results.instrument_type == 'stock' %}
+                            <td><strong>{{ match.broker.symbol }}</strong></td>
+                            <td>{{ match.broker.trade_type }}</td>
+                            <td>{{ "{:,.2f}".format(match.broker.quantity or 0) }}</td>
+                            <td>{{ "{:,.2f}".format(match.broker.price or 0) }}</td>
+                            <td>{{ match.broker.currency }}</td>
+                            <td>{{ match.broker.trade_date }}</td>
+                            <td>{{ match.broker.broker or '' }}</td>
+                            <td>{{ match.broker.account_name or '' }}</td>
+                        {% elif reconciliation_results.instrument_type == 'mutual_fund' %}
+                            <td><strong>{{ match.broker.fund_code }}</strong></td>
+                            <td>{{ match.broker.fund_name }}</td>
+                            <td>{{ match.broker.transaction_type }}</td>
+                            <td>{{ "{:,.2f}".format(match.broker.executed_units or 0) }}</td>
+                            <td>{{ "{:,.2f}".format(match.broker.nav_per_10000 or 0) }}</td>
+                            <td>{{ match.broker.trade_date }}</td>
+                            <td>{{ match.broker.broker or '' }}</td>
+                            <td>{{ match.broker.account_name or '' }}</td>
+                        {% elif reconciliation_results.instrument_type == 'dividend' %}
+                            <td><strong>{{ match.broker.symbol }}</strong></td>
+                            <td>{{ match.broker.payment_date }}</td>
+                            <td>{{ "{:,.2f}".format(match.broker.gross_amount or 0) }}</td>
+                            <td>{{ match.broker.currency }}</td>
+                            <td>{{ match.broker.broker or '' }}</td>
+                            <td>{{ match.broker.account_name or '' }}</td>
+                        {% endif %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% endif %}
+
+{% endblock %}
