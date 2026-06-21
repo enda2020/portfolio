@@ -463,6 +463,16 @@ def get_stock_price(symbol, currency):
                     result['latest_data_at'], result['latest_data_sort'] = _format_market_timestamp(intraday_history.index[-1])
                     result['includes_extended_hours'] = True
                     result['quote_session'] = _classify_us_market_session(intraday_history.index[-1])
+                    # When using intraday (including pre/post-market) quotes, compute today's
+                    # change relative to the last available daily close so today's P/L
+                    # reflects extended-hours movement.
+                    try:
+                        if not history.empty:
+                            last_daily_close = float(history[price_col].iloc[-1])
+                            result['change_today'] = float(result['current_price'] - last_daily_close)
+                            result['change_date'] = _market_date_str(intraday_history.index[-1])
+                    except Exception:
+                        pass
                     print(f"--- Using latest US quote for {symbol} from {result['latest_data_at']} ({result['quote_session']}): {result['current_price']} ---")
 
     except Exception as e:
