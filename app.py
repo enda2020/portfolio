@@ -468,9 +468,26 @@ def get_stock_price(symbol, currency):
                     # reflects extended-hours movement.
                     try:
                         if not history.empty:
-                            last_daily_close = float(history[price_col].iloc[-1])
+                            intraday_ts = intraday_history.index[-1]
+                            # Find the most recent daily close that is before the intraday timestamp.
+                            last_daily_close = None
+                            for ts in reversed(history.index):
+                                try:
+                                    ts_dt = ts.to_pydatetime() if hasattr(ts, 'to_pydatetime') else ts
+                                    intraday_dt = intraday_ts.to_pydatetime() if hasattr(intraday_ts, 'to_pydatetime') else intraday_ts
+                                    if ts_dt.date() < intraday_dt.date():
+                                        last_daily_close = float(history.loc[ts, price_col])
+                                        break
+                                except Exception:
+                                    continue
+                            # Fallbacks if no prior daily close found
+                            if last_daily_close is None:
+                                if len(history[price_col]) > 1:
+                                    last_daily_close = float(history[price_col].iloc[-2])
+                                else:
+                                    last_daily_close = float(history[price_col].iloc[-1])
                             result['change_today'] = float(result['current_price'] - last_daily_close)
-                            result['change_date'] = _market_date_str(intraday_history.index[-1])
+                            result['change_date'] = _market_date_str(intraday_ts)
                     except Exception:
                         pass
                     print(f"--- Using latest US quote for {symbol} from {result['latest_data_at']} ({result['quote_session']}): {result['current_price']} ---")
@@ -3499,6 +3516,19 @@ def index():
         # No filters active, so we can use the summary we already have
         if market_data_reliable and summary['market_data_complete']:
             _ensure_history_updated(summary)
+
+    # 4. Debug logging: print filters and summary totals (temporary)
+    try:
+        print(f"Index view filters: broker={broker_filter} currency={currency_filter} account_name={account_name_filter} tax_status={tax_status_filter}")
+        print(f"Summary totals: total_today_pnl_jpy={summary.get('total_today_pnl_jpy')} total_value_jpy={summary.get('total_value_jpy')}")
+        for stock in summary.get('stocks', []):
+            try:
+                prev_close = stock['current_price'] - stock.get('change_today', 0.0)
+                print(f"STOCK {stock['symbol']} curr={stock['current_price']} change_today={stock.get('change_today')} prev_close={prev_close} today_pnl_jpy={stock.get('today_pnl_jpy')}")
+            except Exception:
+                continue
+    except Exception:
+        pass
 
     # 4. Render the page
     prices_last_updated = _portfolio_now().strftime('%Y-%m-%d %H:%M')
