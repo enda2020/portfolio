@@ -761,3 +761,111 @@ canvas {
     margin-left: auto !important;
   }
 }
+
+/* P&L Calendar Styles */
+.pnl-calendar {
+  overflow-x: auto;
+}
+
+.calendar-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: center;
+  font-size: 0.875rem;
+}
+
+.calendar-table thead th {
+  background: var(--app-surface-2);
+  border: 1px solid var(--app-border);
+  padding: 0.75rem 0.5rem;
+  font-weight: 600;
+  color: var(--app-accent);
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.5px;
+}
+
+.calendar-table tbody td {
+  border: 1px solid var(--app-border);
+  padding: 0;
+  height: 90px;
+  vertical-align: top;
+  background: var(--app-surface);
+  position: relative;
+  transition: all 0.15s ease;
+}
+
+.calendar-day {
+  padding: 0.5rem !important;
+  display: flex;
+  flex-direction: column;
+  cursor: default;
+}
+
+.calendar-day.other-month {
+  background: var(--app-surface-3);
+  opacity: 0.5;
+}
+
+.calendar-day.today {
+  border: 2px solid var(--app-accent);
+  border-radius: 4px;
+}
+
+.calendar-day.pnl-positive {
+  background: rgba(80, 216, 144, 0.08);
+  border-color: rgba(80, 216, 144, 0.3);
+}
+
+.calendar-day.pnl-positive.today {
+  border-color: var(--app-gain);
+  box-shadow: 0 0 8px rgba(80, 216, 144, 0.2);
+}
+
+.calendar-day.pnl-negative {
+  background: rgba(255, 107, 122, 0.08);
+  border-color: rgba(255, 107, 122, 0.3);
+}
+
+.calendar-day.pnl-negative.today {
+  border-color: var(--app-loss);
+  box-shadow: 0 0 8px rgba(255, 107, 122, 0.2);
+}
+
+.calendar-day.pnl-neutral {
+  background: var(--app-surface);
+}
+
+.day-number {
+  font-weight: 600;
+  color: var(--app-text);
+  margin-bottom: 0.35rem;
+  font-size: 0.9rem;
+}
+
+.calendar-day.other-month .day-number {
+  color: var(--app-muted);
+}
+
+.day-pnl {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.4rem 0.3rem;
+  border-radius: 3px;
+  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.calendar-day.pnl-positive .day-pnl {
+  color: var(--app-gain);
+  background: rgba(80, 216, 144, 0.12);
+}
+
+.calendar-day.pnl-negative .day-pnl {
+  color: var(--app-loss);
+  background: rgba(255, 107, 122, 0.12);
+}

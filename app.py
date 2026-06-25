@@ -2659,6 +2659,11 @@ def _calculate_portfolio_summary(trades, exchange_rate, broker_filter=None, curr
     today_str = _portfolio_day_str()
     portfolio_day = _portfolio_day()
     for trade in trades:
+        # Ignore future-dated trades until the trade date arrives.
+        # This keeps pending buys/sells out of current holdings and P&L.
+        if trade.get('trade_date') and trade['trade_date'] > today_str:
+            continue
+
         # Aggregate by both symbol and broker for more granular tracking
         instrument_type = trade['instrument_type'] if 'instrument_type' in trade.keys() else 'stock'
         account_name = trade.get('account_name') or 'Default'
@@ -3617,6 +3622,91 @@ def delete_watchlist_item(item_id):
         flash("Watch list item was not found.", 'warning')
     return redirect(url_for('index'))
 
+def _get_pnl_calendar(year=None, month=None):
+    """Generates P&L calendar data for the given month."""
+    portfolio_day = _portfolio_day()
+    if year is None:
+        year = portfolio_day.year
+    if month is None:
+        month = portfolio_day.month
+    
+    # Get first and last day of the month
+    first_day = datetime(year, month, 1).date()
+    if month == 12:
+        last_day = datetime(year + 1, 1, 1).date() - timedelta(days=1)
+    else:
+        last_day = datetime(year, month + 1, 1).date() - timedelta(days=1)
+    
+    first_day_str = first_day.strftime('%Y-%m-%d')
+    last_day_str = last_day.strftime('%Y-%m-%d')
+    
+    # Fetch all P&L data for the month
+    with sqlite3.connect(DATABASE) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT date, unrealized_pnl_jpy FROM portfolio_history WHERE date >= ? AND date <= ? ORDER BY date",
+            (first_day_str, last_day_str)
+        ).fetchall()
+    
+    pnl_by_date = {row['date']: row['unrealized_pnl_jpy'] for row in rows}
+    
+    # Build calendar weeks
+    weeks = []
+    current_date = first_day
+    
+    # Days before the first of the month (grayed out from previous month)
+    week_start_date = first_day - timedelta(days=first_day.weekday())
+    current_date = week_start_date
+    
+    while current_date <= last_day:
+        week = []
+        for _ in range(7):
+            date_str = current_date.strftime('%Y-%m-%d')
+            pnl = pnl_by_date.get(date_str)
+            
+            is_current_month = current_date.month == month
+            is_today = current_date == portfolio_day
+            
+            day_data = {
+                'date': current_date,
+                'date_str': date_str,
+                'day': current_date.day,
+                'pnl': pnl,
+                'pnl_display': f"¥{pnl:,.0f}" if pnl is not None else '',
+                'is_current_month': is_current_month,
+                'is_today': is_today,
+                'has_data': pnl is not None,
+                'class': ''
+            }
+            
+            if is_current_month and pnl is not None:
+                if pnl > 0:
+                    day_data['class'] = 'pnl-positive'
+                elif pnl < 0:
+                    day_data['class'] = 'pnl-negative'
+                else:
+                    day_data['class'] = 'pnl-neutral'
+            
+            if is_today:
+                day_data['class'] += ' today' if day_data['class'] else 'today'
+            elif not is_current_month:
+                day_data['class'] += ' other-month' if day_data['class'] else 'other-month'
+            
+            week.append(day_data)
+            current_date += timedelta(days=1)
+        
+        weeks.append(week)
+    
+    month_name = first_day.strftime('%B %Y')
+    
+    return {
+        'year': year,
+        'month': month,
+        'month_name': month_name,
+        'weeks': weeks,
+        'weekdays': ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    }
+
 @app.route('/health')
 def portfolio_health():
     """Shows concentration checks, sector exposure, and rebalance ideas."""
@@ -3640,6 +3730,7 @@ def portfolio_health():
     settings = get_health_settings()
     health = _calculate_portfolio_health(summary, settings)
     performance = _calculate_portfolio_performance(summary, trades, exchange_rate)
+    pnl_calendar = _get_pnl_calendar()
     with sqlite3.connect(DATABASE) as conn:
         conn.row_factory = sqlite3.Row
         history_rows = conn.execute("SELECT date, value_jpy, unrealized_pnl_jpy FROM portfolio_history ORDER BY date DESC LIMIT 365").fetchall()
@@ -3651,6 +3742,7 @@ def portfolio_health():
         **summary,
         health=health,
         performance=performance,
+        pnl_calendar=pnl_calendar,
         dividend_income_summary=_calculate_dividend_income_summary(),
         history_data=history_data,
         exchange_rate=exchange_rate,

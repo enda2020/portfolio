@@ -267,6 +267,44 @@
     </div>
 </div>
 
+<div class="card mb-4">
+    <div class="card-header">
+        <h4 class="mb-0">P&amp;L Calendar — {{ pnl_calendar.month_name }}</h4>
+    </div>
+    <div class="card-body">
+        <div class="pnl-calendar">
+            <table class="calendar-table">
+                <thead>
+                    <tr>
+                        {% for day_name in pnl_calendar.weekdays %}
+                        <th>{{ day_name }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for week in pnl_calendar.weeks %}
+                    <tr>
+                        {% for day in week %}
+                        <td class="calendar-day {{ day.class }}">
+                            <div class="day-number">{{ day.day }}</div>
+                            {% if day.has_data %}
+                            <div class="day-pnl" title="{{ day.date_str }}">{{ day.pnl_display }}</div>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="mt-3 small text-muted">
+            <span class="me-3"><span class="badge bg-success">●</span> Positive P&L</span>
+            <span class="me-3"><span class="badge bg-danger">●</span> Negative P&L</span>
+            <span><span class="badge bg-secondary">●</span> Neutral/No data</span>
+        </div>
+    </div>
+</div>
+
 <div class="row mb-4">
     <div class="col-lg-7 mb-4">
         <div class="card">
