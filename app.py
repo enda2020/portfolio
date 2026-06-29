@@ -500,6 +500,45 @@ def get_stock_price(symbol, currency):
 def get_market_price(symbol, currency, instrument_type='stock'):
     override = _get_market_price_override(symbol, currency, instrument_type)
     if override:
+        is_stale = False
+        days_since_override = 0
+        try:
+            # Stale overrides, often from post-split price corrections, should be
+            # automatically retired if a live price becomes available.
+            override_date_str = override.get('latest_data_at')
+            if override_date_str:
+                override_date = datetime.strptime(override_date_str.split(' ')[0], '%Y-%m-%d').date()
+                days_since_override = (_portfolio_day() - override_date).days
+                if days_since_override > 7:
+                    is_stale = True
+        except (ValueError, TypeError):
+            pass  # Ignore parsing errors and treat as not stale
+
+        if is_stale:
+            print(f"Manual price override for {symbol} is stale ({days_since_override} days old). Attempting to fetch live price.")
+            # To force a live fetch attempt, clear any cached result for this symbol.
+            if instrument_type == 'stock':
+                cache.delete_memoized(get_stock_price, symbol, currency)
+            elif instrument_type == 'mutual_fund':
+                cache.delete_memoized(get_yahoo_jp_mutual_fund_price, symbol)
+
+            live_price_data = None
+            if instrument_type == 'stock':
+                live_price_data = get_stock_price(symbol, currency)
+            elif instrument_type == 'mutual_fund':
+                live_price_data = get_yahoo_jp_mutual_fund_price(symbol)
+
+            if live_price_data and live_price_data.get('is_valid'):
+                print(f"Live price for {symbol} is available. Deleting stale manual override and using live data.")
+                with sqlite3.connect(DATABASE) as conn:
+                    conn.execute(
+                        "DELETE FROM market_price_overrides WHERE symbol = ? AND currency = ? AND instrument_type = ?",
+                        (symbol, currency, instrument_type)
+                    )
+                return live_price_data
+            else:
+                print(f"Could not fetch live price for {symbol}. Retaining stale manual override as fallback.")
+
         return override
     if instrument_type == 'mutual_fund':
         return get_yahoo_jp_mutual_fund_price(symbol)
