@@ -3669,31 +3669,32 @@ def _get_pnl_calendar(year=None, month=None):
     if month is None:
         month = portfolio_day.month
     
-    # Get first and last day of the month
+    # Get first and last day of the month for display
     first_day = datetime(year, month, 1).date()
     if month == 12:
         last_day = datetime(year + 1, 1, 1).date() - timedelta(days=1)
     else:
         last_day = datetime(year, month + 1, 1).date() - timedelta(days=1)
     
-    first_day_str = first_day.strftime('%Y-%m-%d')
+    # Fetch data from one day before the start of the month to calculate daily changes
+    fetch_start_day = first_day - timedelta(days=1)
+    fetch_start_day_str = fetch_start_day.strftime('%Y-%m-%d')
     last_day_str = last_day.strftime('%Y-%m-%d')
     
-    # Fetch all P&L data for the month
+    # Fetch all P&L data for the month, plus one day prior
     with sqlite3.connect(DATABASE) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT date, unrealized_pnl_jpy FROM portfolio_history WHERE date >= ? AND date <= ? ORDER BY date",
-            (first_day_str, last_day_str)
+            (fetch_start_day_str, last_day_str)
         ).fetchall()
     
     pnl_by_date = {row['date']: row['unrealized_pnl_jpy'] for row in rows}
     
     # Build calendar weeks
     weeks = []
-    current_date = first_day
-    
-    # Days before the first of the month (grayed out from previous month)
+
+    # Start from the Monday of the week containing the first day of the month
     week_start_date = first_day - timedelta(days=first_day.weekday())
     current_date = week_start_date
     
@@ -3701,27 +3702,34 @@ def _get_pnl_calendar(year=None, month=None):
         week = []
         for _ in range(7):
             date_str = current_date.strftime('%Y-%m-%d')
+            prev_date_str = (current_date - timedelta(days=1)).strftime('%Y-%m-%d')
+
             pnl = pnl_by_date.get(date_str)
-            
+            prev_pnl = pnl_by_date.get(prev_date_str)
+
+            daily_change = None
+            if pnl is not None and prev_pnl is not None:
+                daily_change = pnl - prev_pnl
+
             is_current_month = current_date.month == month
             is_today = current_date == portfolio_day
-            
+
             day_data = {
                 'date': current_date,
                 'date_str': date_str,
                 'day': current_date.day,
-                'pnl': pnl,
-                'pnl_display': f"¥{pnl:,.0f}" if pnl is not None else '',
+                'pnl': daily_change,
+                'pnl_display': f"¥{daily_change:+,.0f}" if daily_change is not None else '',
                 'is_current_month': is_current_month,
                 'is_today': is_today,
-                'has_data': pnl is not None,
+                'has_data': daily_change is not None,
                 'class': ''
             }
-            
-            if is_current_month and pnl is not None:
-                if pnl > 0:
+
+            if is_current_month and daily_change is not None:
+                if daily_change > 0:
                     day_data['class'] = 'pnl-positive'
-                elif pnl < 0:
+                elif daily_change < 0:
                     day_data['class'] = 'pnl-negative'
                 else:
                     day_data['class'] = 'pnl-neutral'
